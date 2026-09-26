@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..models import OwnedItem, Profile, RecItem, Recommendation, ValidationError
+from ..models import (
+    QUIVER_VARIANTS,
+    OwnedItem,
+    Profile,
+    RecItem,
+    Recommendation,
+    ValidationError,
+)
 from . import engine
 
 EPS = 0.01
@@ -32,18 +39,48 @@ class QuiverPlan:
         return [s for s in self.slots if s.owned is None]
 
 
-def plan_kites(profile: Profile, owned: list[OwnedItem]) -> QuiverPlan:
+# Comfortable quivers narrow each kite's usable band step by step: low edge 0.85 -> 0.95,
+# high edge 1.3 -> 1.1 (t = 0 is the normal band, t = 1 the narrowest).
+COMFORT_STEPS = [i / 20 for i in range(21)]
+
+
+def band_at(t: float) -> tuple[float, float]:
+    return engine.USABLE_LOW + 0.10 * t, engine.USABLE_HIGH - 0.20 * t
+
+
+def plan_kites(profile: Profile, owned: list[OwnedItem], variant: str = "minimum") -> QuiverPlan:
+    """Plan the kite quiver.
+
+    "minimum": fewest kites. "comfortable": one kite more than minimum, spread so each kite is
+    used well inside its range (the narrowest band that still needs only that many kites).
+    """
+    if variant not in QUIVER_VARIANTS:
+        raise ValidationError(f"option must be one of {', '.join(QUIVER_VARIANTS)}")
+    minimum = _cover(profile, owned, band_at(0))
+    if variant == "minimum":
+        return minimum
+    target = len(minimum.slots) + 1
+    # Only plans that cover exactly what the minimum plan covers: a very narrow band can leave
+    # holes between neighbouring standard sizes (e.g. 3 m² and 4 m²).
+    plans = [_cover(profile, owned, band_at(t)) for t in COMFORT_STEPS]
+    valid = [p for p in plans if p.uncovered == minimum.uncovered]
+    exact = [p for p in valid if len(p.slots) == target]
+    # narrowest band (most margin) with exactly one extra kite; else nothing better exists
+    return exact[-1] if exact else minimum
+
+
+def _cover(profile: Profile, owned: list[OwnedItem], band: tuple[float, float]) -> QuiverPlan:
     """Greedy interval cover from the lowest wind upwards.
 
     At each uncovered wind w: use an owned kite that covers w (the one reaching highest),
     otherwise add the smallest standard kite that still works at w — that reaches furthest
-    up, so the greedy choice gives the fewest kites.
+    up, so the greedy choice gives the fewest kites for this usable band.
     """
     style, skill, weight = profile.style, profile.skill, profile.weight_kg
     lo_target, hi_target = profile.wind_min_kn, profile.wind_max_kn
 
     def rng(size: float) -> tuple[float, float]:
-        return engine.kite_wind_range(size, weight, style, skill)
+        return engine.kite_wind_range(size, weight, style, skill, profile.gusty, band)
 
     owned_kites = [k for k in owned if k.type == "kite" and k.size]
     owned_ranges = [(k, *rng(k.size)) for k in owned_kites]
@@ -114,13 +151,17 @@ def _owned_name(item: OwnedItem) -> str:
     return f"your {name} " if name else "your "
 
 
-def recommend_set(profile: Profile, owned: list[OwnedItem]) -> Recommendation:
+def recommend_set(
+    profile: Profile, owned: list[OwnedItem], variant: str = "minimum"
+) -> Recommendation:
     """Full set: kites for the wind range, then board, bar and harness if missing."""
     profile.validate()
     items: list[RecItem] = []
     notes: list[str] = []
 
-    plan = plan_kites(profile, owned)
+    plan = plan_kites(profile, owned, variant)
+    if profile.gusty:
+        notes.append("Gusty spots: kite sizes biased ~7% smaller.")
     notes.extend(plan.notes)
     for slot in plan.new_kites:
         items.append(
@@ -131,7 +172,8 @@ def recommend_set(profile: Profile, owned: list[OwnedItem]) -> Recommendation:
                 min(engine.MAX_KITE, slot.size + 1),
                 slot.wind_min_kn,
                 slot.wind_max_kn,
-                f"covers {slot.wind_min_kn:g}–{slot.wind_max_kn:g} kn",
+                f"{'sweet spot' if variant == 'comfortable' else 'covers'} "
+                f"{slot.wind_min_kn:g}–{slot.wind_max_kn:g} kn",
                 unit="m²",
             )
         )
@@ -163,7 +205,7 @@ def recommend_set(profile: Profile, owned: list[OwnedItem]) -> Recommendation:
             reason += " (between sizes: try both on)"
         items.append(RecItem("harness", None, reason=reason, subtype="/".join(labels)))
 
-    rec = Recommendation(profile=profile, items=items, kind="set")
+    rec = Recommendation(profile=profile, items=items, kind="set", variant=variant)
     rec.explanation = explain(rec, plan, notes)
     return rec
 
@@ -221,10 +263,16 @@ def explain(rec: Recommendation, plan: QuiverPlan, notes: list[str]) -> str:
         f"{s.size:g} m² ({s.wind_min_kn:g}–{s.wind_max_kn:g} kn){' [owned]' if s.owned else ''}"
         for s in kites
     )
+    option = {
+        "minimum": "Option: minimum — fewest kites.",
+        "comfortable": "Option: comfortable — more overlap between kites.",
+    }[rec.variant]
     lines = [
         f"Set for {p.weight_kg:g} kg, {p.wind_min_kn:g}–{p.wind_max_kn:g} kn, "
         f"{p.style}, {p.skill}.",
-        f"Kite quiver: {covered or 'none'}.",
+        option,
+        f"Kite quiver{' (sweet spots)' if rec.variant == 'comfortable' else ''}: "
+        f"{covered or 'none'}.",
     ]
     if not plan.slots:
         lines.append("No standard kite works in this wind range.")
@@ -234,15 +282,17 @@ def explain(rec: Recommendation, plan: QuiverPlan, notes: list[str]) -> str:
     return "\n".join(lines)
 
 
-def best_single_kite(weight: float, lo_w: float, hi_w: float, style: str, skill: str) -> int:
+def best_single_kite(
+    weight: float, lo_w: float, hi_w: float, style: str, skill: str, gusty: bool = False
+) -> int:
     """The standard size whose usable range overlaps [lo_w, hi_w] the most.
 
     Ties go to the size closest to the ideal at the middle of the range.
     """
-    ideal = engine.ideal_kite_size(weight, (lo_w + hi_w) / 2, style, skill)
+    ideal = engine.ideal_kite_size(weight, (lo_w + hi_w) / 2, style, skill, gusty)
 
     def score(size: int) -> tuple[float, float]:
-        rlo, rhi = engine.kite_wind_range(size, weight, style, skill)
+        rlo, rhi = engine.kite_wind_range(size, weight, style, skill, gusty)
         return (min(hi_w, rhi) - max(lo_w, rlo), -abs(size - ideal))
 
     return max(engine.STANDARD_KITE_SIZES, key=score)
@@ -260,8 +310,8 @@ def recommend_single(
     if not (4 <= lo_w < hi_w <= 60):
         raise ValidationError("wind range must be low-high knots between 4 and 60, e.g. 15-22")
     if item_type == "kite":
-        size = best_single_kite(weight, lo_w, hi_w, style, skill)
-        rlo, rhi = engine.kite_wind_range(size, weight, style, skill)
+        size = best_single_kite(weight, lo_w, hi_w, style, skill, profile.gusty)
+        rlo, rhi = engine.kite_wind_range(size, weight, style, skill, profile.gusty)
         reason = f"best single kite for {lo_w:g}–{hi_w:g} kn (usable {rlo:g}–{rhi:g} kn)"
         if rlo > lo_w + EPS or rhi < hi_w - EPS:
             reason += "; one kite can't cover the whole range — ask for a set"
@@ -289,7 +339,7 @@ def recommend_single(
             )
         ]
     elif item_type == "bar":
-        size = engine.kite_size_for(weight, (lo_w + hi_w) / 2, style, skill)
+        size = engine.kite_size_for(weight, (lo_w + hi_w) / 2, style, skill, profile.gusty)
         lo, hi, rec = engine.bar_width(size)
         items = [RecItem("bar", rec, lo, hi, reason=f"bar for a {size} m² kite", unit="cm")]
     elif item_type == "foil":

@@ -22,6 +22,8 @@ MIN_KITE = STANDARD_KITE_SIZES[0]
 K_BASE = 2.2
 STYLE_FACTOR = {"twintip": 1.0, "surfboard": 0.9, "foil": 0.65}
 SKILL_FACTOR = {"beginner": 0.95, "intermediate": 1.0, "advanced": 1.05}
+# Gusty spots: rig a little smaller so the gusts stay manageable (lulls are ridden on the bar).
+GUSTY_FACTOR = 0.93
 
 # A kite is usable from slightly under its ideal wind (underpowered) to well above it
 # (depowered with the bar); riders are more comfortable overpowered than underpowered.
@@ -34,15 +36,17 @@ def load_reference(name: str) -> dict:
     return yaml.safe_load((REFERENCE_DIR / f"{name}.yaml").read_text(encoding="utf-8"))
 
 
-def power_factor(style: str = "twintip", skill: str = "intermediate") -> float:
-    return K_BASE * STYLE_FACTOR[style] * SKILL_FACTOR[skill]
+def power_factor(style: str = "twintip", skill: str = "intermediate", gusty: bool = False) -> float:
+    return K_BASE * STYLE_FACTOR[style] * SKILL_FACTOR[skill] * (GUSTY_FACTOR if gusty else 1.0)
 
 
-def ideal_kite_size(weight_kg: float, wind_kn: float, style="twintip", skill="intermediate"):
+def ideal_kite_size(
+    weight_kg: float, wind_kn: float, style="twintip", skill="intermediate", gusty=False
+):
     """Unrounded ideal size in m²."""
     if wind_kn <= 0:
         raise ValueError("wind must be positive")
-    return weight_kg * power_factor(style, skill) / wind_kn
+    return weight_kg * power_factor(style, skill, gusty) / wind_kn
 
 
 def round_kite_size(raw: float) -> int:
@@ -50,18 +54,27 @@ def round_kite_size(raw: float) -> int:
     return min(STANDARD_KITE_SIZES, key=lambda s: (abs(s - raw), -s))
 
 
-def kite_size_for(weight_kg: float, wind_kn: float, style="twintip", skill="intermediate") -> int:
-    return round_kite_size(ideal_kite_size(weight_kg, wind_kn, style, skill))
+def kite_size_for(
+    weight_kg: float, wind_kn: float, style="twintip", skill="intermediate", gusty=False
+) -> int:
+    return round_kite_size(ideal_kite_size(weight_kg, wind_kn, style, skill, gusty))
 
 
 def _round_half(x: float) -> float:
     return math.floor(x * 2 + 0.5) / 2
 
 
-def kite_wind_range(size_m2: float, weight_kg: float, style="twintip", skill="intermediate"):
+def kite_wind_range(
+    size_m2: float,
+    weight_kg: float,
+    style="twintip",
+    skill="intermediate",
+    gusty=False,
+    usable: tuple[float, float] = (USABLE_LOW, USABLE_HIGH),
+):
     """(low_kn, high_kn) this rider can use a kite of this size in."""
-    ideal_wind = weight_kg * power_factor(style, skill) / size_m2
-    return _round_half(ideal_wind * USABLE_LOW), _round_half(ideal_wind * USABLE_HIGH)
+    ideal_wind = weight_kg * power_factor(style, skill, gusty) / size_m2
+    return _round_half(ideal_wind * usable[0]), _round_half(ideal_wind * usable[1])
 
 
 # --- boards -----------------------------------------------------------------------------------

@@ -10,7 +10,7 @@ import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from .models import (
     MARK_KINDS,
@@ -178,6 +178,9 @@ MIGRATIONS: list[str] = [
     """
     UPDATE owned_equipment SET size = size * 100 WHERE type = 'bar' AND size < 5;
     UPDATE owned_equipment SET size = size * 10000 WHERE type = 'foil' AND size < 1;
+    """,
+    """
+    ALTER TABLE recommendations ADD COLUMN variant TEXT NOT NULL DEFAULT 'minimum';
     """,
 ]
 
@@ -354,10 +357,12 @@ class Database:
         created = now_iso()
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO recommendations (kind, profile_snapshot, explanation, created_at) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO recommendations "
+                "(kind, variant, profile_snapshot, explanation, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (
                     rec.kind,
+                    rec.variant,
                     json.dumps(rec.profile.to_dict(), ensure_ascii=False),
                     rec.explanation,
                     created,
@@ -400,6 +405,7 @@ class Database:
         return Recommendation(
             id=row["id"],
             kind=row["kind"],
+            variant=row["variant"],
             profile=Profile.from_dict(json.loads(row["profile_snapshot"])),
             explanation=row["explanation"],
             created_at=row["created_at"],
@@ -411,10 +417,32 @@ class Database:
         return self._rec_from_row(row) if row else None
 
     def latest_recommendation(self) -> Recommendation | None:
+        """The active set searches use: the one picked with `use`, else the newest minimum set."""
+        active = self.conn.execute("SELECT value FROM meta WHERE key = 'active_rec'").fetchone()
+        if active:
+            rec = self.get_recommendation(int(active["value"]))
+            if rec is not None and rec.kind == "set":
+                return rec
         row = self.conn.execute(
-            "SELECT * FROM recommendations WHERE kind = 'set' ORDER BY id DESC LIMIT 1"
+            "SELECT * FROM recommendations WHERE kind = 'set' "
+            "ORDER BY (variant = 'minimum') DESC, id DESC LIMIT 1"
         ).fetchone()
         return self._rec_from_row(row) if row else None
+
+    def set_active_recommendation(self, rec_id: int | None) -> None:
+        """Pick the set searches use; None goes back to 'newest minimum set'."""
+        with self.conn:
+            if rec_id is None:
+                self.conn.execute("DELETE FROM meta WHERE key = 'active_rec'")
+                return
+            rec = self.get_recommendation(rec_id)
+            if rec is None or rec.kind != "set":
+                raise ValidationError(f"no saved set with id {rec_id} (see: kitefinder history)")
+            self.conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('active_rec', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (str(rec_id),),
+            )
 
     def list_recommendations(self, limit: int = 20) -> list[Recommendation]:
         rows = self.conn.execute(
@@ -470,6 +498,41 @@ class Database:
         return [dict(r) for r in self.conn.execute(sql + " ORDER BY id DESC", args).fetchall()]
 
     # --- maintenance ------------------------------------------------------------------------
+
+    def restore(self, src: Path | str) -> Path:
+        """Replace the live DB with a backup; returns the safety copy of what was replaced.
+
+        The file is checked first and nothing changes if it is not a usable kitefinder DB.
+        """
+        src = Path(src).expanduser()
+        if not src.is_file():
+            raise ValidationError(f"no such file: {src}")
+        if str(self.path) != ":memory:" and src.resolve() == self.path.resolve():
+            raise ValidationError("that is the live database; pick a backup file")
+        source = sqlite3.connect(f"file:{quote(str(src))}?mode=ro", uri=True)
+        try:
+            try:
+                version = source.execute("PRAGMA user_version").fetchone()[0]
+                has_profile = source.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'profile'"
+                ).fetchone()
+            except sqlite3.DatabaseError as e:
+                raise ValidationError(f"{src.name} is not a kitefinder backup ({e})") from e
+            if not has_profile:
+                raise ValidationError(f"{src.name} is not a kitefinder backup")
+            if version > SCHEMA_VERSION:
+                raise ValidationError(
+                    f"{src.name} was made by a newer version (schema v{version}); update first"
+                )
+            safety_dir = (
+                self.path.parent / "backups" if str(self.path) != ":memory:" else src.parent
+            )
+            safety = self.backup(safety_dir / f"before-restore-{now_iso().replace(':', '')}.db")
+            source.backup(self.conn)
+        finally:
+            source.close()
+        self.migrate()
+        return safety
 
     def backup(self, dest: Path | str) -> Path:
         """Consistent copy of the live DB (safe while the daemon is writing)."""

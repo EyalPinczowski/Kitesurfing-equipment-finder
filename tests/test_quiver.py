@@ -166,6 +166,7 @@ def test_set_explanation_full_text():
     rec = quiver.recommend_set(prof(), [OwnedItem("kite", "North", "Orbit", 12)])
     assert rec.explanation == (
         "Set for 80 kg, 12–25 kn, twintip, intermediate.\n"
+        "Option: minimum — fewest kites.\n"
         "Kite quiver: 12 m² (12.5–19 kn) [owned], 8 m² (18.5–28.5 kn).\n"
         "Your 12 m² kite is slightly underpowered between 12 and 12.5 kn.\n"
         "Using your North Orbit 12 m² kite for 12.5–19 kn."
@@ -250,3 +251,77 @@ def test_owned_kite_bigger_than_standard_extends_low_end():
 def test_single_rejects_bad_wind_override(wind):
     with pytest.raises(ValidationError, match="wind range"):
         quiver.recommend_single(prof(), "kite", wind)
+
+
+# --- step 2b: gusty bias and quiver variants ---------------------------------------------------
+
+
+@pytest.mark.parametrize("weight, lo, hi, style, skill", GRID)
+def test_gusty_never_bigger_kites(weight, lo, hi, style, skill):
+    calm = prof(weight, lo, hi, style=style, skill=skill)
+    gusty = prof(weight, lo, hi, style=style, skill=skill, gusty=True)
+    for w in range(int(lo), int(hi) + 1):
+        assert engine.kite_size_for(weight, w, style, skill, True) <= engine.kite_size_for(
+            weight, w, style, skill
+        )
+    assert coverage_gaps(quiver.plan_kites(gusty, []), lo, hi) == []
+    # the biggest kite of a gusty quiver is never bigger than the calm one
+    assert max(s.size for s in quiver.plan_kites(gusty, []).slots) <= max(
+        s.size for s in quiver.plan_kites(calm, []).slots
+    )
+
+
+def test_gusty_note_and_smaller_sizes():
+    rec = quiver.recommend_set(prof(gusty=True), [])
+    assert "Gusty spots: kite sizes biased ~7% smaller." in rec.explanation
+    assert engine.ideal_kite_size(80, 20, gusty=True) == pytest.approx(8.8 * 0.93)
+
+
+def comfort_margin(plan, p):
+    """Worst case over the wind range of how far inside its best kite's normal range it sits."""
+    worst, w = 99.0, p.wind_min_kn
+    while w <= p.wind_max_kn:
+        if not any(a <= w <= b for a, b in plan.uncovered):
+            best = max(
+                min(w - lo, hi - w)
+                for lo, hi in (
+                    engine.kite_wind_range(s.size, p.weight_kg, p.style, p.skill, p.gusty)
+                    for s in plan.slots
+                )
+            )
+            worst = min(worst, best)
+        w += 0.5
+    return worst
+
+
+@pytest.mark.parametrize("weight, lo, hi, style, skill", GRID)
+def test_comfortable_is_one_more_kite_with_more_margin(weight, lo, hi, style, skill):
+    p = prof(weight, lo, hi, style=style, skill=skill)
+    minimum = quiver.plan_kites(p, [], "minimum")
+    comfy = quiver.plan_kites(p, [], "comfortable")
+    assert coverage_gaps(comfy, lo, hi) == []
+    assert comfy.uncovered == minimum.uncovered
+    if [s.size for s in comfy.slots] == [s.size for s in minimum.slots]:
+        return  # no better quiver exists; the CLI then says the options are the same
+    assert len(comfy.slots) == len(minimum.slots) + 1
+    assert comfort_margin(comfy, p) >= comfort_margin(minimum, p)
+
+
+def test_comfortable_falls_back_when_nothing_better():
+    p = prof(110, 8, 15, skill="beginner")
+    same = [s.size for s in quiver.plan_kites(p, [], "comfortable").slots]
+    assert same == [s.size for s in quiver.plan_kites(p, [], "minimum").slots]
+
+
+def test_variant_recorded_and_explained():
+    rec = quiver.recommend_set(prof(), [], "comfortable")
+    assert rec.variant == "comfortable"
+    assert "Option: comfortable — more overlap between kites." in rec.explanation
+    assert "Kite quiver (sweet spots): 13 m²" in rec.explanation
+    assert all(i.reason.startswith("sweet spot ") for i in rec.items if i.type == "kite")
+    assert [i.size for i in rec.items if i.type == "kite"] == [13, 10, 8]
+
+
+def test_unknown_variant_rejected():
+    with pytest.raises(ValidationError, match="option"):
+        quiver.plan_kites(prof(), [], "luxury")

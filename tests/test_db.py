@@ -413,3 +413,113 @@ def test_v4_converts_old_bar_and_foil_units(tmp_path, monkeypatch):
     with Database(path) as new:
         got = sorted((i.type, round(i.size, 6)) for i in new.list_owned())
     assert got == [("bar", 50), ("bar", 52), ("foil", 1500), ("foil", 1500), ("kite", 3)]
+
+
+# --- step 2b: active set + restore --------------------------------------------------------------
+
+
+def test_variant_roundtrip_and_latest_prefers_minimum(db, profile):
+    m = Recommendation(profile=profile, items=[], variant="minimum")
+    c = Recommendation(profile=profile, items=[], variant="comfortable")
+    db.save_recommendation(m)
+    db.save_recommendation(c)
+    assert db.get_recommendation(c.id).variant == "comfortable"
+    assert db.latest_recommendation().id == m.id
+    db.set_active_recommendation(c.id)
+    assert db.latest_recommendation().id == c.id
+    db.set_active_recommendation(None)
+    assert db.latest_recommendation().id == m.id
+
+
+def test_active_set_that_was_deleted_falls_back(db, profile):
+    m = Recommendation(profile=profile, items=[])
+    c = Recommendation(profile=profile, items=[], variant="comfortable")
+    db.save_recommendation(m)
+    db.save_recommendation(c)
+    db.set_active_recommendation(c.id)
+    with db.conn:
+        db.conn.execute("DELETE FROM recommendations WHERE id = ?", (c.id,))
+    assert db.latest_recommendation().id == m.id
+
+
+def test_restore_roundtrip_with_safety_backup(db, profile, tmp_path):
+    db.save_profile(profile)
+    db.add_owned(OwnedItem("kite", size=12))
+    snap = db.backup(tmp_path / "snap.db")
+    profile.weight_kg = 99
+    db.save_profile(profile)
+    db.add_owned(OwnedItem("kite", size=9))
+    safety = db.restore(snap)
+    assert db.get_profile().weight_kg == 80
+    assert [i.size for i in db.list_owned()] == [12]
+    assert safety.parent == db.path.parent / "backups"
+    with Database(safety) as before:
+        assert before.get_profile().weight_kg == 99  # nothing lost: the replaced DB is kept
+
+
+def test_restore_rejects_non_kitefinder_files(db, profile, tmp_path):
+    db.save_profile(profile)
+    junk = tmp_path / "junk.db"
+    junk.write_bytes(b"this is not sqlite at all" * 100)
+    other = tmp_path / "other.db"
+    c = sqlite3.connect(other)
+    c.execute("CREATE TABLE x (y)")
+    c.close()
+    for bad, msg in (
+        (junk, "not a kitefinder backup"),
+        (other, "not a kitefinder backup"),
+        (tmp_path / "missing.db", "no such file"),
+        (db.path, "live database"),
+    ):
+        with pytest.raises(ValidationError, match=msg):
+            db.restore(bad)
+    assert db.get_profile() == profile
+    assert not (db.path.parent / "backups").exists()  # no safety copy for a rejected file
+
+
+def test_restore_rejects_newer_schema(db, tmp_path):
+    newer = tmp_path / "newer.db"
+    with Database(newer) as d:
+        d.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    with pytest.raises(ValidationError, match="newer version"):
+        db.restore(newer)
+
+
+def test_restore_old_backup_is_migrated(db, tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    old_path = tmp_path / "old.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:2])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 2)
+    with Database(old_path) as old:
+        with old.conn:
+            old.conn.execute(
+                "INSERT INTO owned_equipment (type, size, created_at) VALUES ('bar', 0.5, 't')"
+            )
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    db.restore(old_path)
+    assert db.schema_version == len(real)
+    assert db.list_owned()[0].size == 50  # v4 unit conversion ran on the restored data
+
+
+def test_restore_of_non_sqlite_file_closes_it(db, tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    opened = []
+    real_connect = sqlite3.connect
+
+    def tracking_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(dbmod.sqlite3, "connect", tracking_connect)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("not a database " * 200)
+    with pytest.raises(ValidationError):
+        db.restore(notes)
+    (conn,) = opened
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")

@@ -14,6 +14,9 @@ SUBTYPES = {
     "foil": ("front_wing", "mast", "complete"),
 }
 CONDITION_PREFS = ("new", "used", "both")
+WIND_SOURCES = ("manual", "areas")
+SEASONS = ("all", "summer", "winter")
+QUIVER_VARIANTS = ("minimum", "comfortable")
 MARK_STATUSES = ("favorite", "dismissed")
 MARK_KINDS = ("listing", "rec_item")
 
@@ -40,6 +43,9 @@ class Profile:
     condition_pref: str = "both"
     travel_km: int | None = None
     home_location: str = ""
+    gusty: bool = False
+    wind_source: str = "manual"  # "areas" when the wind range was derived from spots
+    season: str = "all"
 
     def validate(self) -> Profile:
         _require(30 <= self.weight_kg <= 150, "weight must be between 30 and 150 kg")
@@ -53,6 +59,8 @@ class Profile:
             self.condition_pref in CONDITION_PREFS,
             f"condition must be one of {', '.join(CONDITION_PREFS)}",
         )
+        _require(self.wind_source in WIND_SOURCES, "wind source must be manual or areas")
+        _require(self.season in SEASONS, f"season must be one of {', '.join(SEASONS)}")
         _require(self.budget_ils is None or self.budget_ils >= 0, "budget cannot be negative")
         _require(
             self.travel_km is None or self.travel_km >= 0, "travel distance cannot be negative"
@@ -113,5 +121,6 @@ class Recommendation:
     items: list[RecItem]
     explanation: str = ""
     kind: str = "set"  # "set" or "single"
+    variant: str = "minimum"  # quiver variant for sets: "minimum" or "comfortable"
     id: int | None = None
     created_at: str | None = None

@@ -79,3 +79,43 @@ Each build step ends with a self-review and a report on what was found.
 | 5 | Gusty-spot factor: Israeli winds are often gusty, so bias toward the smaller kite. | Medium | Small, can do now |
 | 6 | Wetsuit sizing for Israeli sea temperatures, with a seasonal note. | Low | Later |
 | 7 | `kitefinder restore <file>` (carried over from Step 1). | Medium | Small |
+
+## Step 2b: Step 2 suggestions applied, plus typing areas instead of wind speeds
+
+**What was built**
+- **Areas instead of wind speed**: `profile set --areas "בת גלים, Sdot Yam"` (or a region such as `north`/`צפון`, `eilat`, `כנרת`), with an optional `--season summer|winter|all`.
+  - The wind range is derived from the areas, and `profile show` says so: "(from your areas, summer)".
+  - An explicit `--wind` always wins. `--wind areas` switches back, and `--areas ""` clears the areas.
+  - Hebrew input works with or without niqqud, hyphens, `ת"א`/`ת״א` and spelling variants such as קרית/קריית.
+  - Typos get suggestions ("did you mean Bat Galim?"). `kitefinder areas` lists every spot.
+- `sizing/reference/spots_il.yaml`: 16 Israeli spots in 5 regions, each with Hebrew and English aliases, summer and winter wind ranges, a gusty flag and water type.
+- **Gusty-spot bias**: kites are about 7% smaller. It's taken from your areas (Tel Aviv and Kinneret are marked gusty) or set with `--gusty/--no-gusty`.
+- **Minimum vs comfortable quiver**: `recommend` shows and saves both. Comfortable is exactly one kite more than minimum, spread for the most margin. Its ranges are labelled "sweet spots". When no better quiver exists it says the two options are the same.
+- **Active set**: `kitefinder use <id>` picks the set that searches will use. A fresh recommendation resets it.
+- **`kitefinder restore <file>`**: checks the file first, keeps a safety copy of the current DB in `data/backups/`, and upgrades older backups to the current schema.
+- DB migration v5 adds the variant column.
+
+**Tests**: 844 passed, 99.6% coverage.
+- Spots: every alias resolves, Hebrew variants, regions, seasons, a no-conflict check, and the exact text of `kitefinder areas`.
+- Over the same 150-profile grid:
+  - A gusty quiver never gets bigger kites and still covers the whole range.
+  - Comfortable is always either minimum + 1 kite with identical coverage and a comfort margin at least as good, or identical to minimum.
+- Restore: a round trip, the safety copy, rejection of junk, missing and newer-schema files with nothing changed, and migration of an older backup.
+
+**Issues found during the self-check and fixed**
+1. The first version of comfortable (a fixed narrow band) gave 4 kites for 80 kg at 12–25 kn, too expensive to be a useful option. It was redesigned as "minimum + 1 kite".
+2. A narrow band left holes between small standard sizes (3 and 4 m²), and the plan silently stopped early, sometimes with 0 kites. Now a comfortable plan must cover exactly what minimum covers.
+3. `recommend --option comfortable` still made the old minimum set the active one.
+4. Found by the code review: `--areas ""` could no longer clear your spots.
+5. Found by the code review: `restore` left the file open when it wasn't a database.
+6. Wording: comfortable ranges read as the kite's full range; they're now labelled "sweet spots". Dor showed the neighbouring beach's Hebrew name.
+
+**Caveat**: the spot wind ranges are typical values from general knowledge (`verified: false`), not measured statistics. They should be checked against wind statistics once network access is allowed, and you know these spots, so corrections are welcome.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Review the spot wind ranges yourself; you ride here. Edit `spots_il.yaml` or tell me the numbers. | High | Any time |
+| 2 | Add a month-based season (e.g. `--season auto` uses the current month). | Low | Small |
+| 3 | Show kite prices next to each option, once listings exist, so the extra kite has a cost. | Medium | Step 5 |
+| 4 | Offer the areas list as buttons in the Telegram questionnaire. | High | Step 6 |
