@@ -182,6 +182,11 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE recommendations ADD COLUMN variant TEXT NOT NULL DEFAULT 'minimum';
     """,
+    """
+    ALTER TABLE recommendation_items ADD COLUMN est_price_ils INTEGER;
+    ALTER TABLE recommendations ADD COLUMN price_condition TEXT NOT NULL DEFAULT 'used';
+    ALTER TABLE recommendations ADD COLUMN budget_ils INTEGER;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -357,12 +362,13 @@ class Database:
         created = now_iso()
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO recommendations "
-                "(kind, variant, profile_snapshot, explanation, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO recommendations (kind, variant, price_condition, budget_ils, "
+                "profile_snapshot, explanation, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     rec.kind,
                     rec.variant,
+                    rec.price_condition,
+                    rec.budget_ils,
                     json.dumps(rec.profile.to_dict(), ensure_ascii=False),
                     rec.explanation,
                     created,
@@ -373,8 +379,8 @@ class Database:
             for item in rec.items:
                 c = self.conn.execute(
                     "INSERT INTO recommendation_items (recommendation_id, type, subtype, unit, "
-                    "size, size_min, size_max, wind_min_kn, wind_max_kn, reason) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "size, size_min, size_max, wind_min_kn, wind_max_kn, reason, est_price_ils) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         rec.id,
                         item.type,
@@ -386,6 +392,7 @@ class Database:
                         item.wind_min_kn,
                         item.wind_max_kn,
                         item.reason,
+                        item.est_price_ils,
                     ),
                 )
                 item.id = c.lastrowid
@@ -395,7 +402,7 @@ class Database:
     def _items_for(self, rec_id: int) -> list[RecItem]:
         rows = self.conn.execute(
             "SELECT id, recommendation_id, type, subtype, unit, size, size_min, size_max, "
-            "wind_min_kn, wind_max_kn, reason FROM recommendation_items "
+            "wind_min_kn, wind_max_kn, reason, est_price_ils FROM recommendation_items "
             "WHERE recommendation_id = ? ORDER BY id",
             (rec_id,),
         ).fetchall()
@@ -406,6 +413,8 @@ class Database:
             id=row["id"],
             kind=row["kind"],
             variant=row["variant"],
+            price_condition=row["price_condition"],
+            budget_ils=row["budget_ils"],
             profile=Profile.from_dict(json.loads(row["profile_snapshot"])),
             explanation=row["explanation"],
             created_at=row["created_at"],

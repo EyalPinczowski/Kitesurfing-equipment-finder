@@ -6,6 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
+from . import pricing
 from .config import load_settings
 from .db import Database
 from .models import (
@@ -83,16 +84,44 @@ def format_rec_item(item: RecItem) -> str:
         size = f"{item.size:g}{sep}{unit}"
         if item.size_min is not None and item.size_max is not None:
             size += f" ({item.size_min:g}–{item.size_max:g}{sep}{unit})"
-    return f"• {kind} {size} — {item.reason}"
+    price = f" · ~{ils(item.est_price_ils)}" if item.est_price_ils is not None else ""
+    return f"• {kind} {size} — {item.reason}{price}"
 
 
-def format_recommendation(rec: Recommendation) -> str:
+VARIANT_LABELS = {
+    "minimum": "minimum quiver",
+    "comfortable": "comfortable quiver",
+    "one_kite": "one-kite quiver",
+}
+
+
+def ils(amount: int) -> str:
+    return f"₪{amount:,}"
+
+
+def budget_line(total: int, budget: int) -> str:
+    if total <= budget:
+        return f"✓ Fits your {ils(budget)} budget."
+    return f"✗ {ils(total - budget)} over your {ils(budget)} budget."
+
+
+def format_recommendation(
+    rec: Recommendation, alt_new_total: int | None = None, budget: int | None = None
+) -> str:
     label = f"{rec.kind}, {rec.variant}" if rec.kind == "set" else rec.kind
     head = f"Recommendation #{rec.id} ({label})" if rec.id else f"Recommendation ({label})"
     body = [head, rec.explanation]
     if rec.items:
         body.append("To look for:")
         body.extend(format_rec_item(i) for i in rec.items)
+        if any(i.est_price_ils is not None for i in rec.items):
+            total = pricing.total(rec)
+            cost = f"Estimated cost: ~{ils(total)} {rec.price_condition}"
+            if alt_new_total is not None:
+                cost += f" · ~{ils(alt_new_total)} new"
+            body.append(cost + " (typical Israeli prices, not live listings)")
+            if budget is not None:
+                body.append(budget_line(total, budget))
     else:
         body.append("Nothing to buy — your gear covers it.")
     return "\n".join(body)
@@ -178,9 +207,17 @@ def build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--wind", help="override wind range for a single item, e.g. 18-24")
     rc.add_argument(
         "--option",
-        choices=(*QUIVER_VARIANTS, "both"),
-        default="both",
-        help="minimum = fewest kites, comfortable = more overlap (default: show both)",
+        choices=(*QUIVER_VARIANTS, "all"),
+        help="minimum = fewest kites, comfortable = one more kite for more overlap, "
+        "one_kite = a single kite (default: show all)",
+    )
+    rc.add_argument(
+        "--under",
+        type=int,
+        nargs="?",
+        const=-1,  # "--under" with no number: use the profile budget
+        metavar="PRICE",
+        help="the best set within this price in ₪ (no number: your profile budget)",
     )
     us = sub.add_parser("use", help="choose which saved set searches use")
     us.add_argument("id", type=int)
@@ -286,25 +323,88 @@ def _same_items(a: Recommendation, b: Recommendation) -> bool:
     return key(a) == key(b)
 
 
-def _recommend_sets(db: Database, prof: Profile, option: str) -> str:
+DISPLAY_ORDER = ("minimum", "comfortable", "one_kite")
+
+
+def _priced(prof: Profile, rec: Recommendation) -> tuple[Recommendation, int | None]:
+    """Price in the preferred condition (used when both are fine); also the new total."""
+    primary = "new" if prof.condition_pref == "new" else "used"
+    pricing.price_recommendation(rec, primary)
+    alt = None
+    if prof.condition_pref == "both" and rec.items:
+        alt = sum(pricing.estimate_item(i, "new") for i in rec.items)
+    return rec, alt
+
+
+def _recommend_sets(db: Database, prof: Profile, option: str | None) -> str:
     owned = db.list_owned()
-    variants = QUIVER_VARIANTS if option == "both" else (option,)
-    recs = [quiver.recommend_set(prof, owned, v) for v in variants]
-    note = ""
-    if len(recs) == 2 and _same_items(*recs):
-        recs = recs[:1]
-        note = "The comfortable option is the same as the minimum one for your range."
+    variants = DISPLAY_ORDER if option in (None, "all") else (option,)
+    recs: list[Recommendation] = []
+    notes = []
+    for v in variants:
+        rec = quiver.recommend_set(prof, owned, v)
+        twin = next((r for r in recs if _same_items(r, rec)), None)
+        if twin is not None:
+            notes.append(
+                f"The {VARIANT_LABELS[v]} is the same as the {VARIANT_LABELS[twin.variant]} "
+                "for your range."
+            )
+            continue
+        recs.append(rec)
+    budget = prof.budget_ils
+    parts = []
     for rec in recs:
+        rec.budget_ils = budget
+        _, alt = _priced(prof, rec)
         db.save_recommendation(rec)
-    # A fresh recommendation becomes the active set: the one asked for, or the minimum of both.
-    db.set_active_recommendation(recs[0].id if option != "both" else None)
-    active = db.latest_recommendation()
-    parts = [format_recommendation(r) for r in recs]
-    footer = [note] if note else []
-    footer.append(f"Searches will use set #{active.id} ({active.variant}).")
-    if len(recs) == 2:
+        parts.append(format_recommendation(rec, alt, budget))
+    # A fresh recommendation becomes the active set: the one asked for; with several, the best
+    # one that fits the budget (else the minimum quiver).
+    active = recs[0]
+    if len(recs) > 1 and budget is not None:
+        fitting = [r for r in recs if pricing.total(r) <= budget]
+        if fitting:
+            active = min(fitting, key=lambda r: QUIVER_VARIANTS.index(r.variant))
+    db.set_active_recommendation(active.id)
+    footer = [*notes, f"Searches will use set #{active.id} ({active.variant})."]
+    if len(recs) > 1:
         footer.append("Switch with: kitefinder use <id>")
     return "\n\n".join(parts) + "\n\n" + "\n".join(footer)
+
+
+def _recommend_under(db: Database, prof: Profile, budget: int) -> str:
+    owned = db.list_owned()
+
+    def build(variant: str) -> Recommendation:
+        return quiver.recommend_set(prof, owned, variant)
+
+    rec, fits = pricing.best_within_budget(build, budget, prof.condition_pref)
+    total = pricing.total(rec)
+    label = f"{VARIANT_LABELS[rec.variant]}, {rec.price_condition}"
+    if fits:
+        head = f"Best set within {ils(budget)}: {label} — ~{ils(total)}."
+    else:
+        head = (
+            f"Nothing fits {ils(budget)}. The cheapest rideable set ({label}) is "
+            f"~{ils(total)}, {ils(total - budget)} over."
+        )
+    db.save_recommendation(rec)
+    if fits:
+        db.set_active_recommendation(rec.id)
+    lines = [head, "", format_recommendation(rec, budget=budget)]
+    better = QUIVER_VARIANTS[: QUIVER_VARIANTS.index(rec.variant)]
+    if fits and better:
+        cond = pricing.conditions_for(prof.condition_pref)[-1]  # the cheaper condition
+        up = [pricing.price_recommendation(build(v), cond) for v in better]
+        up = [r for r in up if not _same_items(r, rec)]
+        if up:
+            nxt = min(up, key=pricing.total)
+            extra = pricing.total(nxt) - budget
+            lines.append(
+                f"For {ils(extra)} more: {VARIANT_LABELS[nxt.variant]}, {cond} "
+                f"(~{ils(pricing.total(nxt))})."
+            )
+    return "\n".join(lines)
 
 
 def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
@@ -348,11 +448,22 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
                 raise ValidationError("set up your profile first: kitefinder profile set ...")
             if a.wind and not a.item:
                 raise ValidationError("--wind only applies with --item")
+            if a.under is not None and (a.item or a.option):
+                raise ValidationError("--under picks the option itself; drop --item/--option")
             if a.item:
                 wind = parse_wind_range(a.wind) if a.wind else None
-                rec = quiver.recommend_single(prof, a.item, wind)
+                rec, alt = _priced(prof, quiver.recommend_single(prof, a.item, wind))
                 db.save_recommendation(rec)
-                return format_recommendation(rec)
+                return format_recommendation(rec, alt)
+            if a.under is not None:
+                budget = prof.budget_ils if a.under == -1 else a.under
+                if budget is None:
+                    raise ValidationError(
+                        "give a price (--under 9000) or set a budget: profile set --budget 9000"
+                    )
+                if budget < 0:
+                    raise ValidationError("the price can't be negative")
+                return _recommend_under(db, prof, budget)
             return _recommend_sets(db, prof, a.option)
         if a.cmd == "use":
             db.set_active_recommendation(a.id)
@@ -374,7 +485,11 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
                     else f"{i.type} {fmt_size(i.type, i.size, i.unit or None)}"
                     for i in r.items
                 )
-                out.append(f"#{r.id} {r.created_at} [{r.kind}] {parts}")
+                label = f"{r.kind}, {r.variant}" if r.kind == "set" else r.kind
+                cost = ""
+                if any(i.est_price_ils is not None for i in r.items):
+                    cost = f" · ~{ils(pricing.total(r))} {r.price_condition}"
+                out.append(f"#{r.id} {r.created_at} [{label}] {parts}{cost}")
             return "\n".join(out)
         if a.cmd in ("fav", "dismiss"):
             db.set_mark(a.kind, a.id, a.status, a.note)

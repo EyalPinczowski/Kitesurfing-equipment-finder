@@ -119,3 +119,39 @@ Each build step ends with a self-review and a report on what was found.
 | 2 | Add a month-based season (e.g. `--season auto` uses the current month). | Low | Small |
 | 3 | Show kite prices next to each option, once listings exist, so the extra kite has a cost. | Medium | Step 5 |
 | 4 | Offer the areas list as buttons in the Telegram questionnaire. | High | Step 6 |
+
+## Step 2c: one-kite quiver and budget ("best set under ₪X")
+
+**What was built**
+- **One-kite quiver** (`--option one_kite`): the single kite that covers the most of your wind range. It uses a kite you own if that covers almost as much. It says where you'll be under- or overpowered.
+- `recommend` now shows **all three options** (minimum, comfortable, one kite). Options identical to one already shown are listed once, with a note.
+- **Price estimates**: every recommended item shows an estimated Israeli price (`sizing/reference/prices_il.yaml`, marked `verified: false`), along with the set's estimated total, used and/or new depending on your new/used preference. Gear you own costs nothing.
+- **Budget**: with `profile set --budget`, each option is marked "✓ Fits" or "✗ ₪X over", and searches use the best option that fits.
+- **`recommend --under 9000`** (or `--under` alone, to use your profile budget) returns the best set within that price.
+  - Order of preference: comfortable, then minimum, then one kite. New is preferred over used when you accept both and it's affordable.
+  - It adds a "For ₪X more: …" hint for the next option up.
+  - If nothing fits, it says how much the cheapest *rideable* set costs. It never suggests a partial set, since a kite without a bar, harness and board can't be ridden.
+- Foil riders get the foil parts they're actually missing: a complete foil, or just the front wing or mast.
+- History lines show the variant and the estimated cost. Migration v6 adds the price and budget columns.
+
+**Tests**: 1,114 passed, 99% coverage.
+- The one-kite pick has the best overlap over the 150-profile grid.
+- Price table checks, and exact price values.
+- The budget pick is the best affordable option: 216 combinations of weight, budget and new/used preference, each checking that no better affordable option was skipped.
+- Exact text of the `--under` output.
+
+**Issues found during the self-check and fixed**
+1. A "buy first" list for tight budgets suggested kite + harness without a bar, which isn't a rideable set. It was removed in favour of "the cheapest rideable set costs ₪X".
+2. Found by the code review: a foil rider's set was priced with just a front wing, not a complete foil, so it looked cheaper than it is.
+3. Found by the code review: a ₪0 budget was treated as "no budget".
+4. My own test assumed "minimum quiver, new" beats "comfortable quiver, used". The rule is quiver quality first, then condition. That's deliberate: more kites means more riding days.
+
+**Caveat**: prices are rough estimates, not market data. In Step 5, the median price of real collected listings replaces them wherever there are enough listings.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Weight the one-kite pick toward your most common wind. Mediterranean summers are mostly 12–18 kn, so a slightly bigger single kite may suit you better than the overlap maths says. This uses the spot data. | Medium | Small |
+| 2 | Real market prices from collected listings, instead of the estimate table. | High | Step 5 |
+| 3 | Budget split hint, e.g. "spend more on the kite, buy the board used". | Low | Later |
+| 4 | Let you set your own prices for items in the table. | Low | Small |

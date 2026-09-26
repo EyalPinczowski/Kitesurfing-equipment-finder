@@ -153,7 +153,8 @@ def test_foil_rider_gets_foil_board_and_wing():
     rec = quiver.recommend_set(prof(80, 10, 20, style="foil"), [])
     t = by_type(rec)
     assert t["board"][0].subtype == "foilboard" and t["board"][0].unit == "L"
-    assert t["foil"][0].subtype == "front_wing" and t["foil"][0].unit == "cm²"
+    assert t["foil"][0].subtype == "complete" and t["foil"][0].unit == "cm²"
+    assert t["foil"][0].reason.startswith("complete foil (mast, fuselage, wings)")
     assert max(k.size for k in t["kite"]) <= 12  # foil kites are much smaller
 
 
@@ -325,3 +326,71 @@ def test_variant_recorded_and_explained():
 def test_unknown_variant_rejected():
     with pytest.raises(ValidationError, match="option"):
         quiver.plan_kites(prof(), [], "luxury")
+
+
+# --- one-kite quiver ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("weight, lo, hi, style, skill", GRID)
+def test_one_kite_is_single_best_overlap(weight, lo, hi, style, skill):
+    p = prof(weight, lo, hi, style=style, skill=skill)
+    plan = quiver.plan_kites(p, [], "one_kite")
+    assert len(plan.slots) == 1
+    (slot,) = plan.slots
+
+    def overlap(size):
+        a, b = engine.kite_wind_range(size, weight, style, skill)
+        return min(b, hi) - max(a, lo)
+
+    assert overlap(slot.size) == max(overlap(s) for s in engine.STANDARD_KITE_SIZES)
+    assert coverage_gaps(plan, lo, hi) == []  # every wind is covered or declared uncovered
+
+
+def test_one_kite_notes_under_and_overpowered():
+    plan = quiver.plan_kites(prof(80, 10, 35), [], "one_kite")
+    assert plan.slots[0].size == 7
+    assert plan.notes == [
+        "One kite: underpowered below 21.5 kn.",
+        "One kite: overpowered above 32.5 kn.",
+    ]
+    assert plan.uncovered == [(10, 21.5), (32.5, 35)]
+
+
+def test_one_kite_narrow_range_fully_covered():
+    plan = quiver.plan_kites(prof(80, 15, 20), [], "one_kite")
+    assert (plan.slots[0].size, plan.uncovered, plan.notes) == (10, [], [])
+
+
+def test_one_kite_prefers_owned_kite_when_almost_as_good():
+    plan = quiver.plan_kites(prof(), [OwnedItem("kite", size=10)], "one_kite")
+    assert plan.slots[0].owned is not None and plan.slots[0].size == 10
+    rec = quiver.recommend_set(prof(), [OwnedItem("kite", size=10)], "one_kite")
+    assert not any(i.type == "kite" for i in rec.items)  # nothing to buy kite-wise
+
+
+def test_one_kite_ignores_poor_owned_kite():
+    plan = quiver.plan_kites(prof(80, 20, 30), [OwnedItem("kite", size=17)], "one_kite")
+    assert plan.slots[0].owned is None and plan.slots[0].size == 7
+
+
+def test_one_kite_explanation():
+    rec = quiver.recommend_set(prof(), [], "one_kite")
+    assert "Option: one kite — simplest and cheapest." in rec.explanation
+    assert [i.size for i in rec.items if i.type == "kite"] == [9]
+    assert "bar for 9 m²" in next(i.reason for i in rec.items if i.type == "bar")
+
+
+@pytest.mark.parametrize(
+    "owned, expected",
+    [
+        ([], ["complete"]),
+        ([OwnedItem("foil", subtype="complete")], []),
+        ([OwnedItem("foil")], []),  # a foil without subtype counts as complete
+        ([OwnedItem("foil", subtype="mast")], ["front_wing"]),
+        ([OwnedItem("foil", subtype="front_wing")], ["mast"]),
+        ([OwnedItem("foil", subtype="mast"), OwnedItem("foil", subtype="front_wing")], []),
+    ],
+)
+def test_foil_parts_needed(owned, expected):
+    rec = quiver.recommend_set(prof(80, 10, 20, style="foil"), owned)
+    assert [i.subtype for i in rec.items if i.type == "foil"] == expected

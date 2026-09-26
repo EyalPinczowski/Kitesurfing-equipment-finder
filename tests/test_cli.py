@@ -98,7 +98,7 @@ def test_history_and_marks(db, profile):
     rec = Recommendation(profile=profile, items=[RecItem("kite", 9), RecItem("board", 139)])
     db.save_recommendation(rec)
     out = run(db, "history")
-    assert out.startswith("#1 ") and out.endswith("[set] kite 9m², board 139 cm")
+    assert out.startswith("#1 ") and out.endswith("[set, minimum] kite 9m², board 139 cm")
     item_id = rec.items[0].id
     assert run(db, "favorites") == "No favorites yet."
     assert run(db, "fav", "rec_item", str(item_id)) == f"Marked rec_item #{item_id} as favorite"
@@ -174,15 +174,19 @@ def test_recommend_set_full_output_and_saved(db):
         "Your 12 m² kite is slightly underpowered between 12 and 12.5 kn.\n"
         "Using your North Orbit 12 m² kite for 12.5–19 kn.\n"
         "To look for:\n"
-        "• kite 8m² (7–9m²) — covers 18.5–28.5 kn\n"
-        "• board twintip 140 cm (138–141 cm) — twin tip for 80 kg\n"
-        "• bar 52 cm (50–55 cm) — bar for 12 m²; an adjustable-length bar can fly your whole quiver\n"
-        "• harness size M/L — waist 86 cm → size M or L (between sizes: try both on)\n"
+        "• kite 8m² (7–9m²) — covers 18.5–28.5 kn · ~₪2,700\n"
+        "• board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400\n"
+        "• bar 52 cm (50–55 cm) — bar for 12 m²; an adjustable-length bar can fly your whole quiver · ~₪1,300\n"
+        "• harness size M/L — waist 86 cm → size M or L (between sizes: try both on) · ~₪700\n"
+        "Estimated cost: ~₪6,100 used (typical Israeli prices, not live listings)\n"
+        "✓ Fits your ₪8,000 budget.\n"
         "\n"
         "Searches will use set #1 (minimum)."
     )
     assert db.latest_recommendation().id == 1
-    assert run(db, "history").endswith("[set] kite 8m², board 140 cm, bar 52 cm, harness size M/L")
+    assert run(db, "history").endswith(
+        "[set, minimum] kite 8m², board 140 cm, bar 52 cm, harness size M/L · ~₪6,100 used"
+    )
 
 
 def test_recommend_nothing_to_buy(db):
@@ -206,7 +210,8 @@ def test_recommend_single_item(db):
         "Recommendation #1 (single)\n"
         "best single kite for 18–24 kn (usable 16.5–25.5 kn)\n"
         "To look for:\n"
-        "• kite 9m² (8–10m²) — best single kite for 18–24 kn (usable 16.5–25.5 kn)"
+        "• kite 9m² (8–10m²) — best single kite for 18–24 kn (usable 16.5–25.5 kn) · ~₪2,800\n"
+        "Estimated cost: ~₪2,800 used (typical Israeli prices, not live listings)"
     )
     assert db.latest_recommendation() is None  # singles never replace the active set
 
@@ -327,17 +332,32 @@ def test_areas_command(db):
 # --- step 2b: minimum vs comfortable, active set, restore ---------------------------------------
 
 
-def test_recommend_both_options_saved_and_minimum_active(db):
-    run(db, *FULL_PROFILE)
+def test_recommend_all_options_without_budget_minimum_active(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
     out = run(db, "recommend")
     assert "Recommendation #1 (set, minimum)" in out
     assert "Recommendation #2 (set, comfortable)" in out
+    assert "Recommendation #3 (set, one_kite)" in out
+    assert "budget" not in out
+    # condition "both": used prices per item plus the new total
+    assert "Estimated cost: ~₪9,500 used · ~₪21,000 new" in out
+    assert "Estimated cost: ~₪12,300 used · ~₪27,200 new" in out
+    assert "Estimated cost: ~₪6,200 used · ~₪13,600 new" in out
     assert out.endswith("Searches will use set #1 (minimum).\nSwitch with: kitefinder use <id>")
-    assert db.latest_recommendation().id == 1
     assert run(db, "use", "2") == "Searches will use set #2."
     assert db.latest_recommendation().variant == "comfortable"
     run(db, "recommend")  # a new recommendation resets the choice
-    assert db.latest_recommendation().id == 3
+    assert db.latest_recommendation().id == 4
+
+
+def test_recommend_all_options_with_budget_marks_and_activates_best_fit(db):
+    run(db, *FULL_PROFILE)  # budget ₪8,000, used gear
+    out = run(db, "recommend")
+    assert out.count("✗ ₪1,500 over your ₪8,000 budget.") == 1  # minimum ₪9,500
+    assert "✗ ₪4,300 over your ₪8,000 budget." in out  # comfortable ₪12,300
+    assert out.count("✓ Fits your ₪8,000 budget.") == 1  # one kite ₪6,200
+    assert "Searches will use set #3 (one_kite)." in out
+    assert db.latest_recommendation().variant == "one_kite"
 
 
 def test_recommend_identical_options_shown_once(db):
@@ -356,7 +376,8 @@ def test_recommend_identical_options_shown_once(db):
     )
     out = run(db, "recommend")
     assert out.count("Recommendation #") == 1
-    assert "The comfortable option is the same as the minimum one for your range." in out
+    assert "The comfortable quiver is the same as the minimum quiver for your range." in out
+    assert "The one-kite quiver is the same as the minimum quiver for your range." in out
     assert "Switch with" not in out
     assert len(db.list_recommendations()) == 1
 
@@ -395,3 +416,105 @@ def test_clearing_areas(db):
     assert (p.spots, p.wind_source, p.wind_min_kn, p.wind_max_kn) == ([], "manual", 10, 35)
     out = run(db, "profile", "set", "--spots", "")  # already empty, manual: no note
     assert "Areas cleared" not in out and "Spots: —" in out
+
+
+# --- one-kite option and budget ----------------------------------------------------------------
+
+
+def test_recommend_one_kite_option(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    out = run(db, "recommend", "--option", "one_kite")
+    assert out.startswith("Recommendation #1 (set, one_kite)\n")
+    assert "One kite: underpowered below 16.5 kn." in out
+    assert out.endswith("Searches will use set #1 (one_kite).")
+
+
+def test_under_full_output_with_step_up(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    out = run(db, "recommend", "--under", "9000")
+    assert out == (
+        "Best set within ₪9,000: one-kite quiver, used — ~₪6,200.\n"
+        "\n"
+        "Recommendation #1 (set, one_kite)\n"
+        "Set for 80 kg, 12–25 kn, twintip, intermediate.\n"
+        "Option: one kite — simplest and cheapest.\n"
+        "Kite quiver: 9 m² (16.5–25.5 kn).\n"
+        "One kite: underpowered below 16.5 kn.\n"
+        "To look for:\n"
+        "• kite 9m² (8–10m²) — covers 16.5–25.5 kn · ~₪2,800\n"
+        "• board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400\n"
+        "• bar 48 cm (45–50 cm) — bar for 9 m² · ~₪1,300\n"
+        "• harness size M/L — waist 86 cm → size M or L (between sizes: try both on) · ~₪700\n"
+        "Estimated cost: ~₪6,200 used (typical Israeli prices, not live listings)\n"
+        "✓ Fits your ₪9,000 budget.\n"
+        "For ₪500 more: minimum quiver, used (~₪9,500)."
+    )
+    rec = db.latest_recommendation()
+    assert (rec.id, rec.budget_ils, rec.price_condition) == (1, 9000, "used")
+
+
+def test_under_uses_profile_budget_and_picks_new_when_affordable(db):
+    run(
+        db,
+        "profile",
+        "set",
+        "--weight",
+        "80",
+        "--waist",
+        "86",
+        "--wind",
+        "12-25",
+        "--budget",
+        "30000",
+    )
+    out = run(db, "recommend", "--under")
+    assert out.startswith("Best set within ₪30,000: comfortable quiver, new — ~₪27,200.")
+    assert "For ₪" not in out  # already the best option
+
+
+def test_under_nothing_fits(db):
+    run(db, *FULL_PROFILE)
+    run(db, "recommend")  # set #1..#3; #3 (one kite) is active
+    out = run(db, "recommend", "--under", "4000")
+    assert out.startswith(
+        "Nothing fits ₪4,000. The cheapest rideable set (one-kite quiver, used) is ~₪6,200, ₪2,200 over."
+    )
+    assert "✗ ₪2,200 over your ₪4,000 budget." in out
+    assert db.latest_recommendation().id == 3  # a set that doesn't fit never becomes active
+
+
+def test_under_errors(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    with pytest.raises(ValidationError, match="set a budget"):
+        run(db, "recommend", "--under")
+    with pytest.raises(ValidationError, match="drop --item/--option"):
+        run(db, "recommend", "--under", "9000", "--option", "minimum")
+    with pytest.raises(ValidationError, match="drop --item/--option"):
+        run(db, "recommend", "--under", "9000", "--item", "kite")
+
+
+def test_new_only_rider_sees_new_prices(db):
+    run(
+        db,
+        "profile",
+        "set",
+        "--weight",
+        "80",
+        "--waist",
+        "86",
+        "--wind",
+        "12-25",
+        "--condition",
+        "new",
+    )
+    out = run(db, "recommend", "--option", "minimum")
+    assert "Estimated cost: ~₪21,000 new (typical" in out
+
+
+def test_under_zero_budget_is_a_real_budget(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25", "--budget", "0")
+    assert run(db, "recommend", "--under").startswith("Nothing fits ₪0.")
+    run(db, "profile", "set", "--budget", "9000")
+    assert run(db, "recommend", "--under", "0").startswith("Nothing fits ₪0.")  # explicit 0 wins
+    with pytest.raises(ValidationError, match="negative"):
+        run(db, "recommend", "--under", "-5")

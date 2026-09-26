@@ -16,7 +16,8 @@ SUBTYPES = {
 CONDITION_PREFS = ("new", "used", "both")
 WIND_SOURCES = ("manual", "areas")
 SEASONS = ("all", "summer", "winter")
-QUIVER_VARIANTS = ("minimum", "comfortable")
+# Best first: used to pick "the best set that fits the budget".
+QUIVER_VARIANTS = ("comfortable", "minimum", "one_kite")
 MARK_STATUSES = ("favorite", "dismissed")
 MARK_KINDS = ("listing", "rec_item")
 
@@ -111,6 +112,7 @@ class RecItem:
     reason: str = ""
     subtype: str = ""
     unit: str = ""
+    est_price_ils: int | None = None  # estimated price in the rec's price_condition
     id: int | None = None
     recommendation_id: int | None = None
 
@@ -121,6 +123,8 @@ class Recommendation:
     items: list[RecItem]
     explanation: str = ""
     kind: str = "set"  # "set" or "single"
-    variant: str = "minimum"  # quiver variant for sets: "minimum" or "comfortable"
+    variant: str = "minimum"  # quiver variant for sets: see QUIVER_VARIANTS
+    price_condition: str = "used"  # which prices est_price_ils uses: "new" or "used"
+    budget_ils: int | None = None  # the budget this set was chosen for, if any
     id: int | None = None
     created_at: str | None = None

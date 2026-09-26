@@ -56,6 +56,8 @@ def plan_kites(profile: Profile, owned: list[OwnedItem], variant: str = "minimum
     """
     if variant not in QUIVER_VARIANTS:
         raise ValidationError(f"option must be one of {', '.join(QUIVER_VARIANTS)}")
+    if variant == "one_kite":
+        return _one_kite(profile, owned)
     minimum = _cover(profile, owned, band_at(0))
     if variant == "minimum":
         return minimum
@@ -67,6 +69,35 @@ def plan_kites(profile: Profile, owned: list[OwnedItem], variant: str = "minimum
     exact = [p for p in valid if len(p.slots) == target]
     # narrowest band (most margin) with exactly one extra kite; else nothing better exists
     return exact[-1] if exact else minimum
+
+
+def _one_kite(profile: Profile, owned: list[OwnedItem]) -> QuiverPlan:
+    """A single kite for the whole range: the size covering most of it (an owned kite if it
+    covers almost as much). The parts it can't reach are reported, not hidden."""
+    style, skill, weight, gusty = profile.style, profile.skill, profile.weight_kg, profile.gusty
+    lo_t, hi_t = profile.wind_min_kn, profile.wind_max_kn
+
+    def overlap(size: float) -> float:
+        lo, hi = engine.kite_wind_range(size, weight, style, skill, gusty)
+        return min(hi, hi_t) - max(lo, lo_t)
+
+    best = best_single_kite(weight, lo_t, hi_t, style, skill, gusty)
+    owned_kites = [k for k in owned if k.type == "kite" and k.size]
+    choice: OwnedItem | None = None
+    if owned_kites:
+        top = max(owned_kites, key=lambda k: overlap(k.size))
+        if overlap(top.size) >= overlap(best) - OWNED_STRETCH_KN:
+            choice = top
+    size = choice.size if choice else best
+    lo, hi = engine.kite_wind_range(size, weight, style, skill, gusty)
+    plan = QuiverPlan(slots=[KiteSlot(size, lo, hi, owned=choice)])
+    if lo > lo_t + EPS:
+        plan.uncovered.append((lo_t, min(lo, hi_t)))
+        plan.notes.append(f"One kite: underpowered below {lo:g} kn.")
+    if hi < hi_t - EPS:
+        plan.uncovered.append((max(hi, lo_t), hi_t))
+        plan.notes.append(f"One kite: overpowered above {hi:g} kn.")
+    return plan
 
 
 def _cover(profile: Profile, owned: list[OwnedItem], band: tuple[float, float]) -> QuiverPlan:
@@ -240,20 +271,33 @@ def _board_items(profile: Profile, owned: list[OwnedItem], notes: list[str]) -> 
             reason += f"; your {b.size:g} {unit} board is on the {direction} side"
         items.append(RecItem("board", rec, lo, hi, reason=reason, subtype=subtype, unit=unit))
 
-    if style == "foil" and not any(o.type == "foil" for o in owned):
-        flo, fhi, frec = engine.front_wing_area(weight, skill)
-        items.append(
-            RecItem(
-                "foil",
-                frec,
-                flo,
-                fhi,
-                reason=f"front wing area for {weight:g} kg, {skill}",
-                subtype="front_wing",
-                unit="cm²",
-            )
-        )
+    if style == "foil":
+        items.extend(_foil_items(owned, weight, skill))
     return items
+
+
+def _foil_items(owned: list[OwnedItem], weight: float, skill: str) -> list[RecItem]:
+    """What's missing to ride a foil: a complete foil, or the front wing / mast you lack."""
+    have = {o.subtype or "complete" for o in owned if o.type == "foil"}
+    if "complete" in have or {"front_wing", "mast"} <= have:
+        return []
+    flo, fhi, frec = engine.front_wing_area(weight, skill)
+    wing = f"front wing ~{frec:g} cm² for {weight:g} kg, {skill}"
+    if "mast" in have:
+        return [RecItem("foil", frec, flo, fhi, reason=wing, subtype="front_wing", unit="cm²")]
+    if "front_wing" in have:
+        return [RecItem("foil", None, reason="mast and fuselage for your wing", subtype="mast")]
+    return [
+        RecItem(
+            "foil",
+            frec,
+            flo,
+            fhi,
+            reason=f"complete foil (mast, fuselage, wings); {wing}",
+            subtype="complete",
+            unit="cm²",
+        )
+    ]
 
 
 def explain(rec: Recommendation, plan: QuiverPlan, notes: list[str]) -> str:
@@ -266,6 +310,7 @@ def explain(rec: Recommendation, plan: QuiverPlan, notes: list[str]) -> str:
     option = {
         "minimum": "Option: minimum — fewest kites.",
         "comfortable": "Option: comfortable — more overlap between kites.",
+        "one_kite": "Option: one kite — simplest and cheapest.",
     }[rec.variant]
     lines = [
         f"Set for {p.weight_kg:g} kg, {p.wind_min_kn:g}–{p.wind_max_kn:g} kn, "

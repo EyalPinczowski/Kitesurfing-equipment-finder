@@ -523,3 +523,17 @@ def test_restore_of_non_sqlite_file_closes_it(db, tmp_path, monkeypatch):
     (conn,) = opened
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         conn.execute("SELECT 1")
+
+
+def test_prices_and_budget_roundtrip(db, profile):
+    rec = Recommendation(
+        profile=profile,
+        items=[RecItem("kite", 9, est_price_ils=2800)],
+        variant="one_kite",
+        price_condition="new",
+        budget_ils=9000,
+    )
+    db.save_recommendation(rec)
+    got = db.get_recommendation(rec.id)
+    assert (got.variant, got.price_condition, got.budget_ils) == ("one_kite", "new", 9000)
+    assert got.items[0].est_price_ils == 2800
