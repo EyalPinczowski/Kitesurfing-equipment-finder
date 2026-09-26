@@ -46,6 +46,11 @@ Never invent a value: use null when the post does not say it.
 {text}
 </post>"""
 
+SINGLE_ITEM_NOTE = (
+    "\nThis is one product from a shop: return exactly one item (its title, size option, "
+    "price and description all describe the same product)."
+)
+
 _S = {"type": "STRING", "nullable": True}
 _N = {"type": "NUMBER", "nullable": True}
 SCHEMA = {
@@ -166,6 +171,7 @@ def extract_post(
     url: str = "",
     seller: str = "",
     no_client_reason: str = "no Gemini key",
+    single_item: bool = False,
 ) -> ExtractResult:
     """Gemini when available; the rule-based extractor when not (or when it fails)."""
     from . import rules
@@ -176,13 +182,17 @@ def extract_post(
     fallback_reason = no_client_reason
     if client is not None:
         try:
-            raw = client.generate_json(PROMPT.format(text=_as_data(text)), SCHEMA)
+            prompt = PROMPT.format(text=_as_data(text))
+            if single_item:
+                prompt += SINGLE_ITEM_NOTE
+            raw = client.generate_json(prompt, SCHEMA)
             return _tag(clean_items(raw, text, source, url, seller), "gemini")
         except QuotaExceeded as e:
             fallback_reason = f"Gemini quota: {e}"
         except LLMError as e:
             fallback_reason = f"Gemini failed: {e}"
-    result = _tag(clean_items(rules.extract_raw(text), text, source, url, seller), "rules")
+    raw = rules.extract_raw(text, single_item=single_item)
+    result = _tag(clean_items(raw, text, source, url, seller), "rules")
     result.flags.append(f"fallback: {fallback_reason}")
     return result
 

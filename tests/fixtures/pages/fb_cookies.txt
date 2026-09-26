@@ -1,0 +1,4 @@
+# Netscape HTTP Cookie File
+.facebook.com	TRUE	/	TRUE	0	c_user	100001
+.facebook.com	TRUE	/	TRUE	0	xs	abc
+.example.com	TRUE	/	TRUE	0	z	1

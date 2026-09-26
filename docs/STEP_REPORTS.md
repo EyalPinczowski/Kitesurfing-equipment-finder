@@ -290,3 +290,61 @@ Each build step ends with a self-review and a report on what was found.
 | 4 | Batch several short posts into one Gemini call to stretch the free daily quota. | Medium | Step 5 |
 | 5 | Verify the kite size charts live via Gemini (Step 2's open item). | Medium | With the key |
 | 6 | Accept HEIC photos (iPhone). This needs a converter, since Pillow can't read them by default. | Low | Later |
+
+## Step 4: collectors (shops, Yad2, Facebook) and the prefilter
+
+**What was built**
+- `collectors/base.py`:
+  - `RawPost` (id, text, images, author, hints) and `CollectResult`, with **completeness**: expected count vs products seen, why the collector stopped, and errors.
+  - A polite `HttpFetcher`: random pauses between requests, a mobile user agent, cookies.
+  - Bot-wall detection, split into strong and weak signs so a shop that merely loads reCAPTCHA isn't flagged.
+- `collectors/web.py`, for the shop sites:
+  - WooCommerce category pages: product cards, sale prices, out-of-stock items, the "Showing 1–12 of 45 results" count in Hebrew and English, and pagination.
+  - Product pages with size options (`data-product_variations`): one post per size, each with its own price and stock.
+  - schema.org JSON-LD product lists, and a plain-text fallback for other sites.
+  - Shop items are marked new unless the title says used or demo.
+- `collectors/yad2.py`: reads the `__NEXT_DATA__` JSON by recognising ad-shaped objects, so it doesn't depend on fixed field names. It uses a total only when it sits next to the ads it counts, dedupes across pages, and reports bot walls and format changes.
+- `collectors/facebook.py`:
+  - Cookies in every common export format (Cookie-Editor JSON, a `{name: value}` object, and Netscape `cookies.txt` including `#HttpOnly_` lines). The `c_user` and `xs` cookies are required.
+  - Share links (`/share/g/…`) resolved through the redirect or page metadata.
+  - Mobile group pages: post ID, author, text, real photos (icons and emoji filtered out), and "הצג פוסטים נוספים" pagination. It stops after a streak of known posts, and detects login walls and "no posts, format may have changed".
+  - Marketplace search JSON: title, price, city, photo and sold, first results page only, newest first.
+- `prefilter.py`: a cheap recall-first gate before the LLM. It only rejects posts with no gear word, brand, model or size, and records the reason.
+- DB:
+  - `upsert_raw_post` returns new, changed or seen. An edited post, e.g. a price drop, goes back to extraction.
+  - `known_source_ids`, `raw_posts_in_stage` and `set_stage`.
+  - Migration v9 stores collector hints.
+- Single-item mode for shop and Marketplace posts, so the title plus description gives one item.
+
+**Tests**: 1,866 offline tests passed, 98% coverage.
+- Family 3 (nothing missed), on saved pages:
+  - Every product and size option is collected exactly once, with the expected count matched (5 of 5 products, 7 posts).
+  - Repeats across pages are collapsed, and each stop reason is asserted.
+  - A missing product, a pagination loop, `max pages`, a failed detail page and bot walls all make the result *incomplete*, never silently "complete".
+  - Re-runs add nothing, and an edit is detected.
+  - **Prefilter recall is 100%** on all 79 labelled posts.
+- The sample pages are built by a checked-in generator (`tests/fixtures/pages/generate.py`).
+
+**Issues found during the self-check and fixed**
+1. The Facebook emoji image was stored as a listing photo.
+2. A shop product's description produced a phantom second item; fixed with single-item mode.
+3. A Marketplace "first page only" result claimed to be complete.
+4. Found by the code review: pages that load reCAPTCHA were flagged as blocked.
+5. Found by the code review: `cookies.txt` lost the HttpOnly `xs` cookie.
+6. Found by the code review: a kite + bar package lost the bar.
+7. Found by the code review: collector hints weren't stored.
+8. Found by the code review: the Marketplace format-change alarm could never fire.
+9. Found by the code review: size options without IDs overwrote each other.
+10. Found by the code review: Yad2 could take a page count as the total and stop early while claiming completeness.
+11. Found by the code review: the Hebrew word "עוד" was cut from the end of posts.
+12. Found by the code review: `limit=0` returned everything.
+13. Found by the code review: quadratic dedup.
+
+**Not verifiable here**: every parser was built from the platforms' known formats, because this environment blocks the sites. See `docs/DECISIONS_FOR_APPROVAL.md` items 11–17. The first run on the phone is the real test, and each collector reports a format change loudly instead of returning nothing.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Save one real page per source from the phone (`kitefinder collect --save-pages`, in Step 5) and add them as test fixtures. | High | First real run |
+| 2 | Facebook group posts sorted by "new posts" instead of "recent activity", if the mobile site offers it. | Medium | After a real run |
+| 3 | Fetch full Marketplace item pages for descriptions (sizes are often only there). This costs more requests. | Medium | Later |

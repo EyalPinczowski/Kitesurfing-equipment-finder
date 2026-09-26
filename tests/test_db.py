@@ -619,3 +619,48 @@ def test_same_post_saved_twice_updates_items(db):
     assert first == again
     (listing,) = db.candidate_listings()
     assert listing.price_ils == 2500
+
+
+# --- raw posts from collectors ------------------------------------------------------------------
+
+
+def test_upsert_raw_post_new_seen_changed(db):
+    from kitefinder.collectors.base import RawPost
+
+    p = RawPost("yad2", "a1", "קייט 12 מטר 3200", url="u", author="x", image_urls=["i1"])
+    rid, state = db.upsert_raw_post(p)
+    assert state == "new" and db.known_source_ids("yad2") == {"a1"}
+    assert db.upsert_raw_post(p) == (rid, "seen")
+    db.set_stage(rid, "extracted", "ok")
+    edited = RawPost("yad2", "a1", "קייט 12 מטר 2900 (ירד מחיר)", url="u", image_urls=["i1"])
+    assert db.upsert_raw_post(edited) == (rid, "changed")
+    (row,) = db.raw_posts_in_stage("fetched")
+    assert (
+        row["text"].endswith("(ירד מחיר)")
+        and row["stage_reason"] == "changed"
+        and row["image_urls"] == ["i1"]
+    )
+    assert db.raw_posts_in_stage("extracted") == []
+    db.upsert_raw_post(RawPost("facebook", "a1", "other source, same id"))
+    assert (
+        db.known_source_ids("yad2") == {"a1"}
+        and len(db.raw_posts_in_stage("fetched", limit=5)) == 2
+    )
+
+
+def test_upgrade_to_v9_keeps_raw_posts(tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    path = tmp_path / "v8.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:8])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 8)
+    with Database(path) as old:
+        with old.conn:
+            old.conn.execute("INSERT INTO raw_posts (source, source_id, content_hash, first_seen_at, "
+                             "last_seen_at) VALUES ('yad2', 'x', 'h', 't', 't')")  # fmt: skip
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    with Database(path) as new:
+        (row,) = new.raw_posts_in_stage("fetched")
+        assert row["hints"] == {}

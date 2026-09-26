@@ -198,6 +198,9 @@ MIGRATIONS: list[str] = [
     ALTER TABLE listings ADD COLUMN extracted_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE listings ADD COLUMN bundle_price_ils INTEGER;
     """,
+    """
+    ALTER TABLE raw_posts ADD COLUMN hints TEXT NOT NULL DEFAULT '{}';
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -469,6 +472,66 @@ class Database:
             "SELECT * FROM recommendations ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [self._rec_from_row(r) for r in rows]
+
+    # --- raw posts (what the collectors saw) --------------------------------------------------
+
+    def upsert_raw_post(self, post, run_id: int | None = None) -> tuple[int, str]:
+        """Store a collected post. Returns (id, "new" | "changed" | "seen").
+
+        A post whose text or photos changed (edited, price drop) goes back to "fetched" so it
+        is extracted again; an unchanged one only gets its last-seen time updated.
+        """
+        now = now_iso()
+        row = self.conn.execute(
+            "SELECT id, content_hash FROM raw_posts WHERE source = ? AND source_id = ?",
+            (post.source, post.source_id),
+        ).fetchone()
+        images = json.dumps(post.image_urls, ensure_ascii=False)
+        hints = json.dumps(post.hints, ensure_ascii=False)
+        with self.conn:
+            if row is None:
+                cur = self.conn.execute(
+                    "INSERT INTO raw_posts (source, source_id, url, author, text, image_urls, "
+                    "posted_at, content_hash, stage_status, first_seen_at, last_seen_at, run_id, "
+                    "hints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'fetched', ?, ?, ?, ?)",
+                    (post.source, post.source_id, post.url, post.author, post.text, images,
+                     post.posted_at, post.content_hash, now, now, run_id, hints),
+                )  # fmt: skip
+                return cur.lastrowid, "new"
+            if row["content_hash"] != post.content_hash:
+                self.conn.execute(
+                    "UPDATE raw_posts SET url = ?, author = ?, text = ?, image_urls = ?, "
+                    "content_hash = ?, stage_status = 'fetched', stage_reason = 'changed', "
+                    "last_seen_at = ?, run_id = ?, hints = ? WHERE id = ?",
+                    (post.url, post.author, post.text, images, post.content_hash, now, run_id,
+                     hints, row["id"]),
+                )  # fmt: skip
+                return row["id"], "changed"
+            self.conn.execute(
+                "UPDATE raw_posts SET last_seen_at = ? WHERE id = ?", (now, row["id"])
+            )
+            return row["id"], "seen"
+
+    def known_source_ids(self, source: str) -> set[str]:
+        rows = self.conn.execute("SELECT source_id FROM raw_posts WHERE source = ?", (source,))
+        return {r["source_id"] for r in rows}
+
+    def raw_posts_in_stage(self, stage: str, limit: int | None = None) -> list[dict]:
+        sql = "SELECT * FROM raw_posts WHERE stage_status = ? ORDER BY id"
+        if limit is not None:
+            sql += f" LIMIT {max(0, int(limit))}"
+        rows = self.conn.execute(sql, (stage,)).fetchall()
+        return [
+            {**dict(r), "image_urls": json.loads(r["image_urls"]), "hints": json.loads(r["hints"])}
+            for r in rows
+        ]
+
+    def set_stage(self, raw_post_id: int, stage: str, reason: str = "") -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE raw_posts SET stage_status = ?, stage_reason = ? WHERE id = ?",
+                (stage, reason, raw_post_id),
+            )
 
     # --- listings ---------------------------------------------------------------------------
 

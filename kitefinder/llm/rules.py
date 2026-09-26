@@ -262,8 +262,24 @@ def _condition(text: str, default=None):
     return default
 
 
-def extract_raw(text: str) -> dict:
-    """Same JSON shape as the Gemini answer."""
+def _merge_into_one(items: list[dict]) -> list[dict]:
+    """A single product described several times (title + description): mentions of the same
+    type are one item, each field taken from the first mention that has it. Different types
+    stay separate — a "kite + bar package" is a bundle, handled by the bundle-price rule."""
+    merged: dict[str, dict] = {}
+    for item in items:
+        first = merged.setdefault(item["type"], dict(item))
+        if first is item or first == item:
+            continue
+        for key, value in item.items():
+            if first.get(key) in (None, "") and value not in (None, ""):
+                first[key] = value
+    return list(merged.values())
+
+
+def extract_raw(text: str, single_item: bool = False) -> dict:
+    """Same JSON shape as the Gemini answer. `single_item`: the text describes one product
+    (a shop product page), so repeated mentions are the same item."""
     low = text.lower()
     offering = nz.has_any(low, ("מוכר", "מוכרת", "למכירה", "for sale", "selling"))
     selling = nz.has_any(low, SALE_WORDS) or bool(_prices(text)) or nz.has_any(low, nz.SOLD_WORDS)
@@ -298,6 +314,8 @@ def extract_raw(text: str) -> dict:
                 "description": chunk.strip()[:200],
             }
         )
+    if single_item and len(items) > 1:
+        items = _merge_into_one(items)
     bundle = None
     all_prices = _prices(text)
     if len(all_prices) == 1 and any(i["price_ils"] is None for i in items):
