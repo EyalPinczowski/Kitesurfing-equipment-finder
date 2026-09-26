@@ -58,5 +58,5 @@ def test_repo_seed_sites_are_valid_and_unique():
 
     urls = load_settings(PROJECT_ROOT, env={}).sources["sites"]
     normalized = [normalize_url(u) for u in urls]
-    assert len(normalized) == len(set(normalized)) == 5
+    assert len(normalized) == len(set(normalized)) == 6
     assert all(u.startswith("https://") for u in normalized)

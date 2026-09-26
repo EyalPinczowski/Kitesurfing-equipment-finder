@@ -33,6 +33,6 @@ Each build step ends with a self-review and a report on what was found.
 | 5 | Drop `rich` from the plan: plain text keeps the output easy to test, and the Telegram bot is the main UI anyway. | Low | Already done |
 
 ### Step 1 follow-up: seed websites
-- Added the 5 Israeli shop URLs you gave to `config/sources.yaml`. They load into the DB once, through a new `meta` table (migration v2), so a site you remove stays removed.
+- Added the Israeli shop URLs you gave (6 so far, including iks-surf.co.il) to `config/sources.yaml`. They load into the DB once, through a new `meta` table (migration v2), so a site you remove stays removed.
 - Tests: 82 passed, 99% coverage.
 - Note: this cloud environment's network policy blocks these hosts, so they haven't been fetched yet. Real page fixtures come in Step 4, once the domains are allowed.

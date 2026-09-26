@@ -149,4 +149,5 @@ def test_cli_loads_seed_sites_from_config(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "#1 https://kitelab.co.il" in out
     assert "yamitysb.co.il/product-category/surf/%d7%a7" in out
-    assert out.count("\n") == 5
+    assert "https://www.iks-surf.co.il/en/kitesurf-equipment" in out
+    assert out.count("\n") == 6
