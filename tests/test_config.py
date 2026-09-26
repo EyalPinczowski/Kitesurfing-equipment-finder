@@ -51,3 +51,12 @@ def test_repo_sources_yaml_is_valid():
     assert s.sources["location"]["country"] == "IL"
     assert "קייט" in s.sources["facebook"]["marketplace_queries"]
     assert s.sources["schedule"]["lookback_days"] > 0
+
+
+def test_repo_seed_sites_are_valid_and_unique():
+    from kitefinder.db import normalize_url
+
+    urls = load_settings(PROJECT_ROOT, env={}).sources["sites"]
+    normalized = [normalize_url(u) for u in urls]
+    assert len(normalized) == len(set(normalized)) == 5
+    assert all(u.startswith("https://") for u in normalized)

@@ -141,3 +141,12 @@ def test_main_reports_permission_errors_with_termux_hint(monkeypatch, tmp_path, 
     monkeypatch.setattr("kitefinder.db.Database.backup", deny)
     assert cli.main(["backup"]) == 1
     assert "termux-setup-storage" in capsys.readouterr().err
+
+
+def test_cli_loads_seed_sites_from_config(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("KITEFINDER_DATA_DIR", str(tmp_path))
+    assert cli.main(["sites", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "#1 https://kitelab.co.il" in out
+    assert "yamitysb.co.il/product-category/surf/%d7%a7" in out
+    assert out.count("\n") == 5

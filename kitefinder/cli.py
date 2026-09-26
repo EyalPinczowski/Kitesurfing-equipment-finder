@@ -167,7 +167,9 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
     a = build_parser().parse_args(argv)
     own_db = db is None
     if db is None:
-        db = Database(load_settings().db_path)
+        settings = load_settings()
+        db = Database(settings.db_path)
+        db.seed_sites(settings.sources.get("sites") or [])
     try:
         if a.cmd == "profile":
             if a.action == "set":

@@ -31,3 +31,8 @@ Each build step ends with a self-review and a report on what was found.
 | 3 | Automatic daily backup to `/sdcard/Download` from the daemon, keeping the last 7. | Medium | Step 7 |
 | 4 | Accept imperial input (lb / inches) in the profile and convert it. | Low | Later |
 | 5 | Drop `rich` from the plan: plain text keeps the output easy to test, and the Telegram bot is the main UI anyway. | Low | Already done |
+
+### Step 1 follow-up: seed websites
+- Added the 5 Israeli shop URLs you gave to `config/sources.yaml`. They load into the DB once, through a new `meta` table (migration v2), so a site you remove stays removed.
+- Tests: 82 passed, 99% coverage.
+- Note: this cloud environment's network policy blocks these hosts, so they haven't been fetched yet. Real page fixtures come in Step 4, once the domains are allowed.

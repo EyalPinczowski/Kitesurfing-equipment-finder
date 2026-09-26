@@ -162,6 +162,12 @@ MIGRATIONS: list[str] = [
     CREATE UNIQUE INDEX idx_matches_unique
         ON matches(listing_id, COALESCE(rec_item_id, 0), query);
     """,
+    """
+    CREATE TABLE meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -295,6 +301,24 @@ class Database:
         with self.conn:
             cur = self.conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
         return cur.rowcount > 0
+
+    def seed_sites(self, urls: list[str]) -> list[str]:
+        """Adds config seed URLs the first time each one is seen; returns the URLs added.
+
+        Seeds are remembered in `meta`, so a seed the user removed is not re-added on restart.
+        """
+        added = []
+        for url in urls:
+            norm = normalize_url(url)
+            key = f"seeded_site:{norm}"
+            if self.conn.execute("SELECT 1 FROM meta WHERE key = ?", (key,)).fetchone():
+                continue
+            _, created = self.add_site(norm)
+            with self.conn:
+                self.conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, now_iso()))
+            if created:
+                added.append(norm)
+        return added
 
     def record_site_check(self, site_id: int, listing_count: int) -> None:
         with self.conn:

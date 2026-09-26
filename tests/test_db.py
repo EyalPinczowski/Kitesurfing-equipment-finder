@@ -343,3 +343,24 @@ def test_query_matches_without_rec_item_are_unique(db):
 def test_backup_to_folder_that_does_not_exist_yet(db, tmp_path):
     out = db.backup(tmp_path / "new-folder")
     assert out.parent == tmp_path / "new-folder" and out.suffix == ".db"
+
+
+def test_seed_sites_added_once_and_removal_is_respected(db):
+    seeds = ["https://kitelab.co.il", "https://www.laguna.co.il/product-category/kites/"]
+    assert db.seed_sites(seeds) == [
+        "https://kitelab.co.il",
+        "https://www.laguna.co.il/product-category/kites",
+    ]
+    assert db.seed_sites(seeds) == []
+    first = db.list_sites()[0]["id"]
+    db.remove_site(first)
+    assert db.seed_sites(seeds) == []  # removed seed stays removed
+    assert [s["url"] for s in db.list_sites()] == [
+        "https://www.laguna.co.il/product-category/kites"
+    ]
+
+
+def test_seed_site_already_added_by_user_is_not_duplicated(db):
+    db.add_site("kitelab.co.il")
+    assert db.seed_sites(["https://kitelab.co.il/"]) == []
+    assert len(db.list_sites()) == 1

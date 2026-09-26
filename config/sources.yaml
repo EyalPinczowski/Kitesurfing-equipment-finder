@@ -20,7 +20,14 @@ yad2:
   enabled: true
   queries: [קייט, kitesurf, קייטסרפינג]
 
-sites: []                 # seed URLs of shops / listing pages
+# Seed URLs of shops / listing pages. Loaded into the database once; after that manage them
+# with `kitefinder sites ...` or /sites in the bot (removing a seed there is permanent).
+sites:
+  - https://kitelab.co.il
+  - https://kitesurf.co.il
+  - https://kitesurfing.co.il/gear/
+  - https://www.laguna.co.il/product-category/kites/
+  - https://yamitysb.co.il/product-category/surf/%d7%a7%d7%99%d7%99%d7%98-%d7%a1%d7%a8%d7%a4%d7%99%d7%a0%d7%92/
 
 schedule:
   facebook_every_min: 120
