@@ -1,0 +1,22 @@
+# secrets
+.env
+secrets/
+*cookies*.json
+
+# runtime data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/

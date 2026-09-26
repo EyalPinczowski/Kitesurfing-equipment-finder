@@ -1,0 +1,29 @@
+# Seed configuration. Site URLs added through the bot (/sites add) are stored in the database.
+location:
+  country: IL
+  home_city: ""          # e.g. Tel Aviv — used for distance ranking
+  radius_km: 150
+
+facebook:
+  enabled: true
+  min_delay_s: 8          # random delay between requests, keeps us slow and polite
+  max_delay_s: 20
+  groups: []              # e.g. - https://m.facebook.com/groups/<group-id>
+  marketplace_queries:
+    - kitesurf
+    - קייטסרפינג
+    - קייט
+    - טרפז קייט
+    - גלשן קייט
+
+yad2:
+  enabled: true
+  queries: [קייט, kitesurf, קייטסרפינג]
+
+sites: []                 # seed URLs of shops / listing pages
+
+schedule:
+  facebook_every_min: 120
+  yad2_every_min: 60
+  sites_every_min: 180
+  lookback_days: 30
