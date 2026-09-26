@@ -26,6 +26,9 @@ from .models import (
 BRAND_MODES = ("mixed", "same", "kites_bar")
 CANDIDATES_PER_SLOT = 6  # cheapest few per item keep the search small on a phone
 EPS = 0.01
+# An unstated price is ranked as the typical price plus this margin: a listing with a real
+# price near typical wins, but one listed far above typical loses to "ask the seller".
+UNPRICED_MARGIN = 1.15
 
 # Canonical brand -> other spellings (Hebrew posts often write brands in Hebrew).
 BRAND_ALIASES = {
@@ -73,43 +76,81 @@ def normalize_brand(brand: str) -> str:
 class Match:
     listing: Listing
     verified_size: bool  # False when the listing did not state a size we could check
+    cost: int = 0  # what the search ranks by: the listed price, or typical + margin
+    priced: bool = True
+    year_known: bool = True
+    typical: int = 0  # typical price shown for an unpriced listing
 
 
-def match(item: RecItem, listing: Listing, condition_pref: str = "both") -> Match | None:
-    """Does this listing fill this recommended item? None if not."""
-    if listing.type != item.type or listing.sold or listing.price_ils is None:
+def _mk(item: RecItem, listing: Listing, verified_size: bool) -> Match:
+    """A match costed at its listed price (unpriced ones are costed in `match`)."""
+    priced = listing.price_ils is not None
+    return Match(listing, verified_size, listing.price_ils if priced else 0, priced)
+
+
+def typical_price(item: RecItem, listing: Listing, condition_pref: str) -> int:
+    """Typical price for an unpriced listing: new prices for new items (or new-only riders)."""
+    new = listing.is_new is True or condition_pref == "new"
+    try:
+        return pricing.estimate_item(item, "new" if new else "used")
+    except ValueError:
+        return 0
+
+
+def match(
+    item: RecItem, listing: Listing, condition_pref: str = "both", min_year: int | None = None
+) -> Match | None:
+    """Does this listing fill this recommended item? None if not.
+
+    Listings without a price or year are kept (flagged), since many posts leave them out;
+    a stated year older than `min_year` rules the listing out.
+    """
+    if listing.type != item.type or listing.sold:
+        return None
+    if min_year is not None and listing.year is not None and listing.year < min_year:
         return None
     if condition_pref == "new" and listing.is_new is not True:
         return None
     if condition_pref == "used" and listing.is_new is True:
         return None
+    m = _match_size(item, listing)
+    if m is not None:
+        # an unknown year only matters when the rider asked for a minimum year
+        m.year_known = min_year is None or listing.year is not None
+        if not m.priced:
+            m.typical = typical_price(item, listing, condition_pref)
+            m.cost = round(m.typical * UNPRICED_MARGIN)
+    return m
+
+
+def _match_size(item: RecItem, listing: Listing) -> Match | None:
     lo, hi, size = item.size_min, item.size_max, listing.size
     if item.type == "kite":
         if size is None or not (lo - EPS <= size <= hi + EPS):
             return None
-        return Match(listing, True)
+        return _mk(item, listing, True)
     if item.type == "board":
         if listing.subtype and item.subtype and listing.subtype != item.subtype:
             return None
         if size is None or not (lo - 2 - EPS <= size <= hi + 2 + EPS):
             return None
-        return Match(listing, True)
+        return _mk(item, listing, True)
     if item.type == "bar":
         if size is None:
-            return Match(listing, False)  # bar widths are often not stated
-        return Match(listing, True) if lo - 3 <= size <= hi + 3 else None
+            return _mk(item, listing, False)  # bar widths are often not stated
+        return _mk(item, listing, True) if lo - 3 <= size <= hi + 3 else None
     if item.type == "harness":
         wanted = {s.upper() for s in item.subtype.split("/") if s}
         if not listing.size_label:
-            return Match(listing, False)
+            return _mk(item, listing, False)
         got = {s.upper() for s in re.split(r"[/,\s\-–]+", listing.size_label) if s}
-        return Match(listing, True) if wanted & got else None
+        return _mk(item, listing, True) if wanted & got else None
     if item.type == "foil":
         if listing.subtype and item.subtype and listing.subtype != item.subtype:
             return None
         if size is None or lo is None:
-            return Match(listing, False)
-        return Match(listing, True) if lo - EPS <= size <= hi + EPS else None
+            return _mk(item, listing, False)
+        return _mk(item, listing, True) if lo - EPS <= size <= hi + EPS else None
     return None
 
 
@@ -135,7 +176,14 @@ class Assembly:
 
     @property
     def total(self) -> int:
-        return sum(m.listing.price_ils for _, m in self.picks if m is not None)
+        """Known prices plus the typical price of items listed without one."""
+        return sum(
+            m.listing.price_ils if m.priced else m.typical for _, m in self.picks if m is not None
+        )
+
+    @property
+    def unpriced(self) -> list[tuple[RecItem, Match]]:
+        return [(item, m) for item, m in self.picks if m is not None and not m.priced]
 
     @property
     def sellers(self) -> set[str]:
@@ -163,9 +211,10 @@ def score_picks(picks: list[Match | None], slots: list[RecItem]) -> tuple:
     return (
         len(picks) - len(chosen),
         sum(_missing_value(item) for item, m in zip(slots, picks, strict=True) if m is None),
-        sum(m.listing.price_ils for m in chosen),
+        sum(m.cost for m in chosen),
+        sum(1 for m in chosen if not m.priced),  # a real price beats a typical one
         len({_seller(m.listing) for m in chosen}),
-        sum(1 for m in chosen if not m.verified_size),
+        sum(1 for m in chosen if not m.verified_size) + sum(1 for m in chosen if not m.year_known),
     )
 
 
@@ -192,7 +241,7 @@ def _solve(slots: list[RecItem], options: list[list[Match]]) -> list[Match | Non
                 continue
             used.add(lid)
             picks.append(m)
-            dfs(i + 1, picks, used, (missing, mval, cost + m.listing.price_ils))
+            dfs(i + 1, picks, used, (missing, mval, cost + m.cost))
             picks.pop()
             used.discard(lid)
         picks.append(None)  # leave this item unfilled
@@ -208,6 +257,7 @@ def _options(
     listings: list[Listing],
     condition_pref: str,
     brand_for: Callable[[RecItem], str | None],
+    min_year: int | None = None,
 ) -> list[list[Match]]:
     out = []
     for item in items:
@@ -215,10 +265,10 @@ def _options(
         found = [
             m
             for listing in listings
-            if (m := match(item, listing, condition_pref)) is not None
+            if (m := match(item, listing, condition_pref, min_year)) is not None
             and (want is None or normalize_brand(listing.brand) == want)
         ]
-        found.sort(key=lambda m: (m.listing.price_ils, not m.verified_size, m.listing.id or 0))
+        found.sort(key=lambda m: (m.cost, not m.priced, not m.verified_size, m.listing.id or 0))
         out.append(found[:CANDIDATES_PER_SLOT])
     return out
 
@@ -228,13 +278,14 @@ def assemble(
     listings: list[Listing],
     brand_mode: str = "mixed",
     condition_pref: str = "both",
+    min_year: int | None = None,
 ) -> Assembly:
     """The cheapest way to buy this recommendation from the given listings."""
     if brand_mode not in BRAND_MODES:
         raise ValidationError(f"brands must be one of {', '.join(BRAND_MODES)}")
     items = list(rec.items)
     if brand_mode == "mixed":
-        options = _options(items, listings, condition_pref, lambda _: None)
+        options = _options(items, listings, condition_pref, lambda _: None, min_year)
         result = Assembly(rec, list(zip(items, _solve(items, options), strict=True)), brand_mode)
     else:
         constrained = {"same": set(EQUIPMENT_TYPES), "kites_bar": {"kite", "bar"}}[brand_mode]
@@ -258,7 +309,7 @@ def assemble(
                     return None
                 return b if b is not None else "\0no-brand"  # matches no listing
 
-            options = _options(items, listings, condition_pref, brand_for)
+            options = _options(items, listings, condition_pref, brand_for, min_year)
             cand = Assembly(
                 rec, list(zip(items, _solve(items, options), strict=True)), brand_mode, brand or ""
             )
@@ -295,6 +346,15 @@ def _add_warnings(a: Assembly) -> None:
     unverified = [item.type for item, m in a.picks if m is not None and not m.verified_size]
     if unverified:
         a.warnings.append(f"Size not stated for: {', '.join(unverified)} — ask the seller.")
+    no_year = [item.type for item, m in a.picks if m is not None and not m.year_known]
+    if no_year:
+        a.warnings.append(f"Year not stated for: {', '.join(no_year)} — ask the seller.")
+    if a.unpriced:
+        kinds = ", ".join(item.type for item, _ in a.unpriced)
+        a.warnings.append(
+            f"No price stated for: {kinds} — the total uses typical prices for them; "
+            "ask the seller."
+        )
 
 
 def best_assembly_under(
@@ -303,10 +363,13 @@ def best_assembly_under(
     budget: int | None,
     brand_mode: str = "mixed",
     condition_pref: str = "both",
+    min_year: int | None = None,
 ) -> Assembly:
     """Best quiver (comfortable > minimum > one kite) that can be bought complete within the
     budget from real listings; otherwise the cheapest complete one; otherwise the fullest."""
-    results = [assemble(build(v), listings, brand_mode, condition_pref) for v in QUIVER_VARIANTS]
+    results = [
+        assemble(build(v), listings, brand_mode, condition_pref, min_year) for v in QUIVER_VARIANTS
+    ]
     complete = [r for r in results if r.complete]
     if budget is not None:
         fitting = [r for r in complete if r.total <= budget]

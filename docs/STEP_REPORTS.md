@@ -201,3 +201,24 @@ Each build step ends with a self-review and a report on what was found.
 | 1 | Add pickup distance to the cost, using the travel limit from your profile. For example, prefer one seller in Haifa over three across the country for ₪100 more. | Medium | Step 5 (needs listing locations) |
 | 2 | Kite–bar compatibility table by brand and year (e.g. Duotone bars and older North kites), instead of treating every brand pair as a warning. | Medium | Later |
 | 3 | A shop "deal" alert when a new-item price drops below the used estimate. | Low | Step 5 |
+
+## Step 2e: keep unpriced listings, and a minimum year
+
+**What was built**
+- **Unpriced listings are kept.**
+  - They're ranked at the typical price **+15%** (`UNPRICED_MARGIN`), so a real price close to typical wins, but one far above typical loses to "ask the seller".
+  - The typical price is the *new* one for new items or new-only riders, otherwise the used one.
+  - The output shows "price not stated (typical ~₪X)", puts "~" on totals that include guesses, and adds a warning.
+  - Budget lines say "≈ fits at typical prices — confirm with the sellers", and such a set never becomes the active set automatically.
+- **Minimum year**: `profile set --min-year 2019` (0 clears it), overridden per search with `assemble --min-year`.
+  - Listings with an older stated year are skipped.
+  - Listings with no year are kept, but flagged "year not stated — ask the seller", and they lose ties to listings that state a year.
+  - `profile show` has a "Minimum year" line, and the assemble headline shows "2019 or newer".
+
+**Tests**: 1,251 passed, 99% coverage.
+
+**Found by the code review and fixed**
+1. Unpriced new items were costed at used prices.
+2. An unknown price beat real prices just above typical.
+3. `assemble --under` treated a total with guessed prices as a confirmed fit and made that set active.
+4. The one-brand comparison line didn't mark estimates with "~".

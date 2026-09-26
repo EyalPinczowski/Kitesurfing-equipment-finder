@@ -86,7 +86,7 @@ def test_brand_aliases_unique():
         (HARNESS, L("harness", 1, size_label="S/M"), True, True),
         (HARNESS, L("harness", 1, size_label="XL"), False, None),
         (HARNESS, L("harness", 1), True, False),
-        (KITE13, L("kite", None, size=13), False, None),  # no price
+        (KITE13, L("kite", None, size=13), True, True),  # no price: kept (typical price used)
         (KITE13, L("kite", 1, size=13, sold=True), False, None),
     ],
 )
@@ -373,3 +373,105 @@ def test_brand_mode_without_branded_listings_still_fills_free_items():
 def test_hyphenated_harness_sizes(label):
     m = asm.match(HARNESS, L("harness", 1, size_label=label))
     assert m is not None and m.verified_size
+
+
+# --- unpriced listings and minimum year --------------------------------------------------------
+
+
+def test_unpriced_listing_kept_at_typical_price():
+    a = asm.assemble(rec_of(KITE13), with_ids([L("kite", None, "North", 13)]))
+    assert a.complete
+    ((item, m),) = a.picks
+    assert not m.priced and m.typical == 3300  # typical used price of a 13 m² kite
+    assert m.cost == round(3300 * asm.UNPRICED_MARGIN)  # ranked with an uncertainty margin
+    assert a.total == 3300 and len(a.unpriced) == 1  # but the total shows the typical price
+    assert "No price stated for: kite" in a.warnings[-1]
+
+
+def test_priced_listing_beats_unpriced_at_same_cost():
+    listings = with_ids([L("kite", None, "North", 13), L("kite", 3300, "North", 13)])
+    ((_, m),) = asm.assemble(rec_of(KITE13), listings).picks
+    assert m.priced
+
+
+def test_cheaper_priced_beats_unpriced_and_cheap_unpriced_is_not_guessed_lower():
+    listings = with_ids([L("kite", None, "North", 13), L("kite", 3000, "Duotone", 13)])
+    ((_, m),) = asm.assemble(rec_of(KITE13), listings).picks
+    assert m.listing.price_ils == 3000
+    listings = with_ids([L("kite", None, "North", 13), L("kite", 5000, "Duotone", 13)])
+    ((_, m),) = asm.assemble(rec_of(KITE13), listings).picks
+    assert not m.priced  # typical ₪3,300 (+15%) < ₪5,000: worth asking the seller
+
+
+def test_priced_slightly_above_typical_beats_unpriced():
+    """Review regression: an unknown price must not beat a real one just above typical."""
+    listings = with_ids([L("bar", None, "North"), L("bar", 1400, "North")])  # typical ₪1,300
+    ((_, m),) = asm.assemble(rec_of(BAR), listings).picks
+    assert m.priced and m.listing.price_ils == 1400
+
+
+@pytest.mark.parametrize(
+    "is_new, pref, typical",
+    [
+        (True, "both", 7400),
+        (None, "new", None),
+        (False, "new", None),
+        (None, "both", 3300),
+        (False, "used", 3300),
+    ],
+)
+def test_unpriced_new_items_use_new_typical_price(is_new, pref, typical):
+    """Review regression: an unpriced new kite is not costed at the used price."""
+    m = asm.match(KITE13, L("kite", None, size=13, is_new=is_new), pref)
+    if typical is None:
+        assert m is None  # new-only riders need a listing that says it's new
+    else:
+        assert m.typical == typical
+
+
+def test_unpriced_fills_otherwise_missing_item():
+    a = asm.assemble(
+        rec_of(KITE13, BAR), with_ids([L("kite", 2600, "North", 13), L("bar", None, "North")])
+    )
+    assert a.complete and a.total == 2600 + 1300
+
+
+@pytest.mark.parametrize(
+    "year, min_year, kept, year_known",
+    [
+        (2018, 2019, False, True),
+        (2019, 2019, True, True),
+        (2023, 2019, True, True),
+        (None, 2019, True, False),  # not stated: kept, flagged
+        (2010, None, True, True),  # no limit set
+        (None, None, True, True),  # no limit: unknown year doesn't matter
+    ],
+)
+def test_min_year(year, min_year, kept, year_known):
+    m = asm.match(KITE13, L("kite", 2000, size=13, year=year), min_year=min_year)
+    assert (m is not None) == kept
+    if kept:
+        assert m.year_known is year_known
+
+
+def test_min_year_in_assembly_prefers_known_year_and_warns():
+    listings = with_ids(
+        [
+            L("kite", 2000, "North", 13, year=2016),  # too old
+            L("kite", 2400, "North", 13),  # year unknown
+            L("kite", 2400, "Duotone", 13, year=2021),  # same price, year known
+        ]
+    )
+    a = asm.assemble(rec_of(KITE13), listings, min_year=2019)
+    ((_, m),) = a.picks
+    assert m.listing.year == 2021
+    only_unknown = with_ids([L("kite", 2000, "North", 13, year=2016), L("kite", 2400, "North", 13)])
+    a = asm.assemble(rec_of(KITE13), only_unknown, min_year=2019)
+    assert a.complete and a.warnings == ["Year not stated for: kite — ask the seller."]
+
+
+def test_min_year_passed_through_best_under():
+    old = with_ids([L("kite", 2500, "North", 9, year=2015), L("board", 1300, "Cabrinha", 140),
+                    L("bar", 1000, "North"), L("harness", 600, "ION", size_label="M")])  # fmt: skip
+    a = asm.best_assembly_under(build(), old, 9000, min_year=2019)
+    assert not a.complete and any(it.type == "kite" for it in a.missing)

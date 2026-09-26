@@ -69,6 +69,7 @@ def format_profile(p: Profile) -> str:
         f"Budget: {f'₪{p.budget_ils:,}' if p.budget_ils is not None else '—'}",
         f"New/used: {p.condition_pref}",
         f"Travel: {f'{p.travel_km} km' if p.travel_km is not None else '—'}",
+        f"Minimum year: {p.min_year or '—'}",
         f"Home: {p.home_location or '—'}",
     ]
     return "\n".join(lines)
@@ -99,7 +100,11 @@ def ils(amount: int) -> str:
     return f"₪{amount:,}"
 
 
-def budget_line(total: int, budget: int) -> str:
+def budget_line(total: int, budget: int, estimated: bool = False) -> str:
+    if estimated:  # part of the total is typical prices for listings without a price
+        if total <= budget:
+            return f"≈ Fits your {ils(budget)} budget at typical prices — confirm with the sellers."
+        return f"≈ {ils(total - budget)} over your {ils(budget)} budget at typical prices."
     if total <= budget:
         return f"✓ Fits your {ils(budget)} budget."
     return f"✗ {ils(total - budget)} over your {ils(budget)} budget."
@@ -162,6 +167,9 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--skill", choices=SKILL_LEVELS)
     ps.add_argument("--style", choices=STYLES)
     ps.add_argument("--budget", type=int, help="₪")
+    ps.add_argument(
+        "--min-year", type=int, help="skip gear older than this year (0 = no limit), e.g. 2019"
+    )
     ps.add_argument("--condition", choices=CONDITION_PREFS)
     ps.add_argument("--travel-km", type=int)
     ps.add_argument("--home", help="home city")
@@ -223,6 +231,9 @@ def build_parser() -> argparse.ArgumentParser:
         "assemble", help="build a set from the cheapest listings, mixing sellers and sites"
     )
     asm.add_argument("--set", type=int, dest="set_id", help="recommendation id (default: active)")
+    asm.add_argument(
+        "--min-year", type=int, help="only this year or newer (default: your profile; 0 = any)"
+    )
     asm.add_argument(
         "--brands",
         choices=assemble.BRAND_MODES,
@@ -334,6 +345,8 @@ def _profile_set(db: Database, a: argparse.Namespace) -> str:
     ):
         if val is not None:
             setattr(existing, attr, val)
+    if a.min_year is not None:
+        existing.min_year = a.min_year or None
     db.save_profile(existing)
     return "\n".join(["Profile saved.", format_profile(existing), *notes])
 
@@ -401,7 +414,8 @@ def _item_short(item: RecItem) -> str:
     return f"{kind} {item.size:g}{sep}{unit}" if item.size is not None else kind
 
 
-def _listing_line(listing) -> str:
+def _listing_line(m: assemble.Match) -> str:
+    listing = m.listing
     brand = assemble.normalize_brand(listing.brand)
     name = " ".join(x for x in (brand, listing.model) if x) or listing.type
     size = f" {fmt_size(listing.type, listing.size)}" if listing.size is not None else ""
@@ -411,41 +425,46 @@ def _listing_line(listing) -> str:
     cond = {True: "new", False: "used", None: "condition not stated"}[listing.is_new]
     where = listing.location or "location unknown"
     link = f" · {listing.url}" if listing.url else ""
-    return (
-        f"{name}{size}{year} · {ils(listing.price_ils)} {cond} · {where} · {listing.source}{link}"
-    )
+    if m.priced:
+        price = f"{ils(listing.price_ils)} {cond}"
+    else:
+        price = f"price not stated (typical ~{ils(m.typical)}) {cond}"
+    return f"{name}{size}{year} · {price} · {where} · {listing.source}{link}"
 
 
-def format_assembly(a: assemble.Assembly, budget: int | None = None) -> str:
+def format_assembly(
+    a: assemble.Assembly, budget: int | None = None, min_year: int | None = None
+) -> str:
     rec = a.rec
     mode = {
         "mixed": "mixed brands",
         "same": f"all {a.brand}" if a.brand else "one brand",
         "kites_bar": f"{a.brand} kites and bar" if a.brand else "one brand for kites and bar",
     }[a.brand_mode]
+    if min_year:
+        mode += f", {min_year} or newer"
     found = len(a.picks) - len(a.missing)
     n = len(a.sellers)
+    cost = f"~{ils(a.total)}" if a.unpriced else ils(a.total)
     head = (
         f"Cheapest set from listings ({mode}) for recommendation #{rec.id} ({rec.variant}): "
-        f"{ils(a.total)} from {n} seller{'s' if n != 1 else ''}."
+        f"{cost} from {n} seller{'s' if n != 1 else ''}."
     )
     if not a.complete:
         head = (
             f"Partial set from listings ({mode}) for recommendation #{rec.id} ({rec.variant}): "
-            f"{found} of {len(a.picks)} items found, {ils(a.total)} so far."
+            f"{found} of {len(a.picks)} items found, {cost} so far."
         )
     lines = [head]
     for item, m in a.picks:
-        lines.append(
-            f"• {_item_short(item)} → {_listing_line(m.listing) if m else 'not found yet'}"
-        )
+        lines.append(f"• {_item_short(item)} → {_listing_line(m) if m else 'not found yet'}")
     if a.missing:
         lines.append(
             "Missing: " + ", ".join(_item_short(i) for i in a.missing) + " (still looking)."
         )
     lines.extend(f"⚠ {w}" for w in a.warnings)
     if a.complete and budget is not None:
-        lines.append(budget_line(a.total, budget))
+        lines.append(budget_line(a.total, budget, bool(a.unpriced)))
     return "\n".join(lines)
 
 
@@ -456,6 +475,9 @@ def _assemble_cmd(db: Database, a: argparse.Namespace) -> str:
     listings = db.candidate_listings()
     if not listings:
         return "No listings collected yet — they arrive once the collectors run."
+    min_year = prof.min_year if a.min_year is None else (a.min_year or None)
+    if min_year is not None and not 1995 <= min_year <= 2100:
+        raise ValidationError("minimum year must be between 1995 and 2100")
     if a.under is not None:
         if a.set_id is not None:
             raise ValidationError("--under picks the quiver itself; drop --set")
@@ -471,25 +493,27 @@ def _assemble_cmd(db: Database, a: argparse.Namespace) -> str:
             budget,
             a.brands,
             prof.condition_pref,
+            min_year,
         )
         # Save it like `recommend --under` does: estimates, budget, and active when it fits.
         result.rec.budget_ils = budget
         _priced(prof, result.rec)
         db.save_recommendation(result.rec)
-        if result.complete and result.total <= budget:
-            db.set_active_recommendation(result.rec.id)
-        return format_assembly(result, budget)
+        if result.complete and result.total <= budget and not result.unpriced:
+            db.set_active_recommendation(result.rec.id)  # only when the fit is confirmed
+        return format_assembly(result, budget, min_year)
     rec = db.get_recommendation(a.set_id) if a.set_id else db.latest_recommendation()
     if rec is None or rec.kind != "set":
         raise ValidationError("no saved set to assemble — run: kitefinder recommend")
-    result = assemble.assemble(rec, listings, a.brands, prof.condition_pref)
-    text = format_assembly(result, rec.budget_ils)
+    result = assemble.assemble(rec, listings, a.brands, prof.condition_pref, min_year)
+    text = format_assembly(result, rec.budget_ils, min_year)
     if a.brands == "mixed" and result.brand_conflict:
-        alt = assemble.assemble(rec, listings, "kites_bar", prof.condition_pref)
+        alt = assemble.assemble(rec, listings, "kites_bar", prof.condition_pref, min_year)
         if alt.complete or not result.complete:
             extra = alt.total - result.total
             text += (
-                f"\nWith kites and bar from one brand ({alt.brand}): {ils(alt.total)}"
+                f"\nWith kites and bar from one brand ({alt.brand}): "
+                f"{'~' if alt.unpriced else ''}{ils(alt.total)}"
                 f"{f' (+{ils(extra)})' if extra > 0 else ''}"
                 f"{'' if alt.complete else ', incomplete'} — kitefinder assemble --brands kites_bar"
             )

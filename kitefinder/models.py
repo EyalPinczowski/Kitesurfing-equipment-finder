@@ -47,6 +47,7 @@ class Profile:
     gusty: bool = False
     wind_source: str = "manual"  # "areas" when the wind range was derived from spots
     season: str = "all"
+    min_year: int | None = None  # skip listings older than this (unknown years are kept)
 
     def validate(self) -> Profile:
         _require(30 <= self.weight_kg <= 150, "weight must be between 30 and 150 kg")
@@ -63,6 +64,10 @@ class Profile:
         _require(self.wind_source in WIND_SOURCES, "wind source must be manual or areas")
         _require(self.season in SEASONS, f"season must be one of {', '.join(SEASONS)}")
         _require(self.budget_ils is None or self.budget_ils >= 0, "budget cannot be negative")
+        _require(
+            self.min_year is None or 1995 <= self.min_year <= 2100,
+            "minimum year must be between 1995 and 2100",
+        )
         _require(
             self.travel_km is None or self.travel_km >= 0, "travel distance cannot be negative"
         )

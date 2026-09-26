@@ -28,6 +28,7 @@ def test_profile_set_and_show_full_output(db):
         "Budget: ₪8,000\n"
         "New/used: used\n"
         "Travel: 120 km\n"
+        "Minimum year: —\n"
         "Home: Haifa"
     )
     assert out == "Profile saved.\n" + expected
@@ -256,6 +257,7 @@ def test_first_setup_with_areas_only(db):
         "Budget: —\n"
         "New/used: both\n"
         "Travel: —\n"
+        "Minimum year: —\n"
         "Home: —"
     )
     p = db.get_profile()
@@ -653,3 +655,117 @@ def test_assemble_under_saves_budget_prices_and_activates(db):
     assert "~₪" in run(db, "history")
     with pytest.raises(ValidationError, match="negative"):
         run(db, "assemble", "--under", "-500")
+
+
+def test_profile_min_year(db):
+    run(
+        db,
+        "profile",
+        "set",
+        "--weight",
+        "80",
+        "--waist",
+        "86",
+        "--wind",
+        "12-25",
+        "--min-year",
+        "2019",
+    )
+    assert "Minimum year: 2019" in run(db, "profile", "show")
+    run(db, "profile", "set", "--min-year", "0")
+    assert db.get_profile().min_year is None
+    with pytest.raises(ValidationError, match="minimum year"):
+        run(db, "profile", "set", "--min-year", "1980")
+
+
+def test_assemble_min_year_and_unpriced_output(db):
+    from kitefinder.models import Listing
+
+    run(
+        db,
+        "profile",
+        "set",
+        "--weight",
+        "80",
+        "--waist",
+        "86",
+        "--wind",
+        "15-20",
+        "--min-year",
+        "2019",
+    )
+    for listing in [
+        Listing("kite", 1900, "North", "Orbit", 10, year=2015, source="yad2", url="u-old"),
+        Listing("kite", None, "North", "Orbit", 10, year=2021, source="facebook", url="u-new"),
+        Listing("board", 1300, "Cabrinha", size=139, year=2020, source="facebook", url="u-b"),
+        Listing("bar", 1000, "North", year=2020, source="yad2", url="u-bar"),
+        Listing("harness", 600, "ION", size_label="M", source="facebook", url="u-h"),
+    ]:
+        db.add_listing(listing)
+    run(db, "recommend", "--option", "one_kite")
+    out = run(db, "assemble")
+    assert out.startswith(
+        "Cheapest set from listings (mixed brands, 2019 or newer) for recommendation #1 (one_kite): ~₪5,800"
+    )
+    assert (
+        "• kite 10m² → North Orbit 10m² 2021 · price not stated (typical ~₪2,900) condition not stated"
+        in out
+    )
+    assert "u-old" not in out
+    assert "⚠ Year not stated for: harness — ask the seller." in out
+    assert (
+        "⚠ No price stated for: kite — the total uses typical prices for them; ask the seller."
+        in out
+    )
+    out = run(db, "assemble", "--min-year", "0")  # override: any year
+    assert "2019 or newer" not in out and "u-old" in out
+    with pytest.raises(ValidationError, match="minimum year"):
+        run(db, "assemble", "--min-year", "1900")
+
+
+def test_assemble_under_with_unpriced_items_is_not_a_confirmed_fit(db):
+    """Review regression: a total that includes guessed prices is labelled and not activated."""
+    from kitefinder.models import Listing
+
+    run(
+        db,
+        "profile",
+        "set",
+        "--weight",
+        "80",
+        "--waist",
+        "86",
+        "--wind",
+        "15-20",
+        "--budget",
+        "9000",
+    )
+    for listing in [
+        Listing("kite", None, "North", "Orbit", 10, source="facebook", url="k"),
+        Listing("board", 1300, "Cabrinha", size=140, source="facebook", url="b"),
+        Listing("bar", 1000, "North", source="yad2", url="bar"),
+        Listing("harness", 600, "ION", size_label="M", source="facebook", url="h"),
+    ]:
+        db.add_listing(listing)
+    run(db, "recommend", "--option", "minimum")  # set #1 becomes active
+    out = run(db, "assemble", "--under")
+    assert "≈ Fits your ₪9,000 budget at typical prices — confirm with the sellers." in out
+    assert db.latest_recommendation().id == 1  # the guessed fit did not replace the active set
+
+
+def test_brand_alternative_line_marks_estimates(db):
+    from kitefinder.models import Listing
+
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "15-20")
+    for listing in [
+        Listing("kite", 2000, "Duotone", "Rebel", 10, source="yad2", url="k1"),
+        Listing("kite", None, "North", "Orbit", 10, source="yad2", url="k2"),
+        Listing("bar", 900, "North", source="yad2", url="bar"),
+        Listing("board", 1300, "Cabrinha", size=140, source="facebook", url="b"),
+        Listing("harness", 600, "ION", size_label="M", source="facebook", url="h"),
+    ]:
+        db.add_listing(listing)
+    run(db, "recommend", "--option", "one_kite")
+    out = run(db, "assemble")
+    assert "Bar (North) and kite (Duotone) brands differ" in out
+    assert "With kites and bar from one brand (North): ~₪" in out
