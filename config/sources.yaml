@@ -8,7 +8,11 @@ facebook:
   enabled: true
   min_delay_s: 8          # random delay between requests, keeps us slow and polite
   max_delay_s: 20
-  groups: []              # e.g. - https://m.facebook.com/groups/<group-id>
+  # Group links; share links (facebook.com/share/g/...) are resolved to the real group
+  # address on first fetch, using your cookies.
+  groups:
+    - https://www.facebook.com/share/g/1EbtddJgWS/
+    - https://www.facebook.com/share/g/1DZWzVUjGh/
   marketplace_queries:
     - kitesurf
     - קייטסרפינג

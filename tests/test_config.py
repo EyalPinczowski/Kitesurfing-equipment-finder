@@ -60,3 +60,9 @@ def test_repo_seed_sites_are_valid_and_unique():
     normalized = [normalize_url(u) for u in urls]
     assert len(normalized) == len(set(normalized)) == 6
     assert all(u.startswith("https://") for u in normalized)
+
+
+def test_repo_facebook_groups_configured():
+    groups = load_settings(PROJECT_ROOT, env={}).sources["facebook"]["groups"]
+    assert len(groups) == len(set(groups)) == 2
+    assert all(g.startswith("https://www.facebook.com/") for g in groups)
