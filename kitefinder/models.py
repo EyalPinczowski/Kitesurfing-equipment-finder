@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import KW_ONLY, asdict, dataclass, field
 from typing import Any
 
 EQUIPMENT_TYPES = ("kite", "bar", "board", "harness", "foil", "wetsuit", "other")
@@ -128,3 +128,26 @@ class Recommendation:
     budget_ils: int | None = None  # the budget this set was chosen for, if any
     id: int | None = None
     created_at: str | None = None
+
+
+@dataclass
+class Listing:
+    """One item for sale, extracted from a post or product page."""
+
+    type: str
+    price_ils: int | None = None
+    brand: str = ""
+    model: str = ""
+    size: float | None = None  # same units as RecItem for that type
+    _: KW_ONLY  # everything below must be named: Listing(..., year=2021, is_new=False)
+    subtype: str = ""  # board/foil kind
+    size_label: str = ""  # harness S/M/L…
+    year: int | None = None
+    is_new: bool | None = None  # None = not stated
+    location: str = ""
+    description: str = ""
+    sold: bool = False
+    source: str = ""  # facebook / yad2 / site host
+    url: str = ""
+    seller: str = ""
+    id: int | None = None

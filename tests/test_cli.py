@@ -518,3 +518,138 @@ def test_under_zero_budget_is_a_real_budget(db):
     assert run(db, "recommend", "--under", "0").startswith("Nothing fits ₪0.")  # explicit 0 wins
     with pytest.raises(ValidationError, match="negative"):
         run(db, "recommend", "--under", "-5")
+
+
+# --- assemble from listings ---------------------------------------------------------------------
+
+
+def _market(db):
+    from kitefinder.models import Listing
+
+    for listing in [
+        Listing("kite", 3200, "Duotone", "Evo", 13, year=2021, is_new=False, location="Herzliya", source="facebook",
+                url="https://fb.com/p/1", seller="Dan"),
+        Listing("kite", 2600, "North", "Orbit", 13, is_new=False, location="Haifa", source="yad2",
+                url="https://yad2.co.il/i/2", seller="Noa"),
+        Listing("kite", 2500, "North", "Reach", 9, source="yad2", url="https://yad2.co.il/i/3", seller="Noa"),
+        Listing("kite", 2300, "דואוטון", "Rebel", 9, source="kitelab.co.il",
+                url="https://kitelab.co.il/p/4", seller="Kitelab"),
+        Listing("bar", 1100, "North", seller="Noa", source="yad2"),
+        Listing("bar", 1300, "Duotone", size=52, seller="Kitelab", source="kitelab.co.il"),
+        Listing("board", 1300, "Cabrinha", size=139, subtype="twintip", seller="Eli", source="facebook"),
+        Listing("harness", 600, "ION", size_label="M", seller="Gal", source="facebook"),
+    ]:  # fmt: skip
+        db.add_listing(listing)
+
+
+def test_assemble_no_listings(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    assert run(db, "assemble") == "No listings collected yet — they arrive once the collectors run."
+
+
+def test_assemble_needs_profile_and_set(db):
+    with pytest.raises(ValidationError, match="profile first"):
+        run(db, "assemble")
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    _market(db)
+    with pytest.raises(ValidationError, match="no saved set"):
+        run(db, "assemble")
+
+
+def test_assemble_mixed_full_output(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    _market(db)
+    run(db, "recommend", "--option", "minimum")
+    assert run(db, "assemble") == (
+        "Cheapest set from listings (mixed brands) for recommendation #1 (minimum): ₪7,900 from 4 sellers.\n"
+        "• kite 13m² → North Orbit 13m² · ₪2,600 used · Haifa · yad2 · https://yad2.co.il/i/2\n"
+        "• kite 9m² → Duotone Rebel 9m² · ₪2,300 condition not stated · location unknown · kitelab.co.il · https://kitelab.co.il/p/4\n"
+        "• board twintip 140 cm → Cabrinha 139 cm · ₪1,300 condition not stated · location unknown · facebook\n"
+        "• bar 52 cm → North · ₪1,100 condition not stated · location unknown · yad2\n"
+        "• harness M/L → ION size M · ₪600 condition not stated · location unknown · facebook\n"
+        "⚠ Kites from different brands (Duotone, North): one bar may not fly them all — check compatibility or try --brands kites_bar.\n"
+        "⚠ Size not stated for: bar — ask the seller.\n"
+        "With kites and bar from one brand (North): ₪8,100 (+₪200) — kitefinder assemble --brands kites_bar"
+    )
+
+
+def test_assemble_kites_bar_and_same(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    _market(db)
+    run(db, "recommend", "--option", "minimum")
+    out = run(db, "assemble", "--brands", "kites_bar")
+    assert out.startswith(
+        "Cheapest set from listings (North kites and bar) for recommendation #1 (minimum): ₪8,100 from 3 sellers."
+    )
+    assert "With kites and bar from one brand" not in out
+    out = run(db, "assemble", "--brands", "same")
+    assert out.startswith(
+        "Partial set from listings (all North) for recommendation #1 (minimum): 3 of 5 items found"
+    )
+    assert "Missing: board twintip 140 cm, harness M/L (still looking)." in out
+
+
+def test_assemble_specific_set_and_budget_line(db):
+    run(db, *FULL_PROFILE)  # budget ₪8,000
+    _market(db)
+    run(db, "recommend")  # #1 minimum, #2 comfortable, #3 one kite (active)
+    out = run(db, "assemble", "--set", "1")
+    assert "for recommendation #1 (minimum): ₪7,900" in out  # used-only rider: same listings
+    assert "✓ Fits your ₪8,000 budget." in out
+
+
+def test_assemble_under(db):
+    run(
+        db,
+        "profile",
+        "set",
+        "--weight",
+        "80",
+        "--waist",
+        "86",
+        "--wind",
+        "12-25",
+        "--budget",
+        "7000",
+    )
+    _market(db)
+    out = run(db, "assemble", "--under")
+    assert out.startswith(
+        "Cheapest set from listings (mixed brands) for recommendation #1 (one_kite): ₪5,300"
+    )
+    assert out.splitlines()[-1] == "✓ Fits your ₪7,000 budget."
+    out = run(db, "assemble", "--under", "9000")
+    assert "recommendation #2 (minimum): ₪7,900" in out
+    with pytest.raises(ValidationError, match="drop --set"):
+        run(db, "assemble", "--under", "9000", "--set", "1")
+
+
+def test_assemble_under_needs_budget(db):
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    _market(db)
+    with pytest.raises(ValidationError, match="set a budget"):
+        run(db, "assemble", "--under")
+
+
+def test_assemble_under_saves_budget_prices_and_activates(db):
+    run(
+        db,
+        "profile",
+        "set",
+        "--weight",
+        "80",
+        "--waist",
+        "86",
+        "--wind",
+        "12-25",
+        "--budget",
+        "7000",
+    )
+    _market(db)
+    run(db, "assemble", "--under")
+    rec = db.latest_recommendation()
+    assert (rec.id, rec.variant, rec.budget_ils) == (1, "one_kite", 7000)
+    assert all(i.est_price_ils for i in rec.items)
+    assert "~₪" in run(db, "history")
+    with pytest.raises(ValidationError, match="negative"):
+        run(db, "assemble", "--under", "-500")

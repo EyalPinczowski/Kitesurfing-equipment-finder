@@ -1,0 +1,317 @@
+"""Build a recommended set from real listings, mixing sellers and sites for the lowest price.
+
+Brand modes:
+  mixed      any brand for any item (cheapest)
+  same       every item from one brand
+  kites_bar  kites and bar from one brand (a bar usually only flies its own brand's kites);
+             board and harness can be any brand
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from . import pricing
+from .models import (
+    EQUIPMENT_TYPES,
+    QUIVER_VARIANTS,
+    Listing,
+    RecItem,
+    Recommendation,
+    ValidationError,
+)
+
+BRAND_MODES = ("mixed", "same", "kites_bar")
+CANDIDATES_PER_SLOT = 6  # cheapest few per item keep the search small on a phone
+EPS = 0.01
+
+# Canonical brand -> other spellings (Hebrew posts often write brands in Hebrew).
+BRAND_ALIASES = {
+    "Duotone": ["duotone", "דואוטון", "דואטון"],
+    "North": ["north", "north kiteboarding", "נורת", "נורט'"],
+    "Cabrinha": ["cabrinha", "קברינה"],
+    "F-One": ["f-one", "fone", "f one", "אף וואן", "אףוואן"],
+    "Core": ["core", "core kiteboarding", "קור"],
+    "Ozone": ["ozone", "אוזון"],
+    "Naish": ["naish", "נאיש"],
+    "Slingshot": ["slingshot", "סלינגשוט"],
+    "Airush": ["airush", "איירוש"],
+    "Eleveight": ["eleveight", "אלבייט"],
+    "Reedin": ["reedin", "רידין"],
+    "Flysurfer": ["flysurfer", "פליסרפר"],
+    "Crazyfly": ["crazyfly", "crazy fly", "קרייזי פליי"],
+    "Ocean Rodeo": ["ocean rodeo"],
+    "Liquid Force": ["liquid force", "lf"],
+    "Nobile": ["nobile", "נוביל"],
+    "Mystic": ["mystic", "מיסטיק"],
+    "ION": ["ion", "איון"],
+    "Manera": ["manera", "מנרה"],
+    "Dakine": ["dakine", "דקיין"],
+    "Ride Engine": ["ride engine", "רייד אנג'ין"],
+}
+_ALIAS_INDEX = {
+    re.sub(r"[\s\-']+", "", alias.lower()): canon
+    for canon, aliases in BRAND_ALIASES.items()
+    for alias in (canon, *aliases)
+}
+
+
+def normalize_brand(brand: str) -> str:
+    """Canonical brand name; unknown brands keep their own (title-cased) name; '' if none."""
+    key = re.sub(r"[\s\-']+", "", (brand or "").strip().lower())
+    if not key:
+        return ""
+    return _ALIAS_INDEX.get(key, brand.strip().title())
+
+
+# --- matching ---------------------------------------------------------------------------------
+
+
+@dataclass
+class Match:
+    listing: Listing
+    verified_size: bool  # False when the listing did not state a size we could check
+
+
+def match(item: RecItem, listing: Listing, condition_pref: str = "both") -> Match | None:
+    """Does this listing fill this recommended item? None if not."""
+    if listing.type != item.type or listing.sold or listing.price_ils is None:
+        return None
+    if condition_pref == "new" and listing.is_new is not True:
+        return None
+    if condition_pref == "used" and listing.is_new is True:
+        return None
+    lo, hi, size = item.size_min, item.size_max, listing.size
+    if item.type == "kite":
+        if size is None or not (lo - EPS <= size <= hi + EPS):
+            return None
+        return Match(listing, True)
+    if item.type == "board":
+        if listing.subtype and item.subtype and listing.subtype != item.subtype:
+            return None
+        if size is None or not (lo - 2 - EPS <= size <= hi + 2 + EPS):
+            return None
+        return Match(listing, True)
+    if item.type == "bar":
+        if size is None:
+            return Match(listing, False)  # bar widths are often not stated
+        return Match(listing, True) if lo - 3 <= size <= hi + 3 else None
+    if item.type == "harness":
+        wanted = {s.upper() for s in item.subtype.split("/") if s}
+        if not listing.size_label:
+            return Match(listing, False)
+        got = {s.upper() for s in re.split(r"[/,\s\-–]+", listing.size_label) if s}
+        return Match(listing, True) if wanted & got else None
+    if item.type == "foil":
+        if listing.subtype and item.subtype and listing.subtype != item.subtype:
+            return None
+        if size is None or lo is None:
+            return Match(listing, False)
+        return Match(listing, True) if lo - EPS <= size <= hi + EPS else None
+    return None
+
+
+# --- assembling -------------------------------------------------------------------------------
+
+
+@dataclass
+class Assembly:
+    rec: Recommendation
+    picks: list[tuple[RecItem, Match | None]]
+    brand_mode: str
+    brand: str = ""  # the single brand, in same / kites_bar modes
+    warnings: list[str] = field(default_factory=list)
+    brand_conflict: bool = False  # kites (or kites and bar) from different brands
+
+    @property
+    def missing(self) -> list[RecItem]:
+        return [item for item, m in self.picks if m is None]
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
+
+    @property
+    def total(self) -> int:
+        return sum(m.listing.price_ils for _, m in self.picks if m is not None)
+
+    @property
+    def sellers(self) -> set[str]:
+        return {_seller(m.listing) for _, m in self.picks if m is not None}
+
+    def score(self) -> tuple:
+        return score_picks([m for _, m in self.picks], [item for item, _ in self.picks])
+
+
+def _seller(listing: Listing) -> str:
+    return listing.seller or listing.url or f"#{listing.id}"
+
+
+def _missing_value(item: RecItem) -> int:
+    try:
+        return pricing.estimate_item(item, "used")
+    except ValueError:
+        return 0
+
+
+def score_picks(picks: list[Match | None], slots: list[RecItem]) -> tuple:
+    """Lower is better: fewest missing items, then the least valuable ones missing (a missing
+    kite is worse than a missing harness), then cheapest, fewest pickups, checked sizes."""
+    chosen = [m for m in picks if m is not None]
+    return (
+        len(picks) - len(chosen),
+        sum(_missing_value(item) for item, m in zip(slots, picks, strict=True) if m is None),
+        sum(m.listing.price_ils for m in chosen),
+        len({_seller(m.listing) for m in chosen}),
+        sum(1 for m in chosen if not m.verified_size),
+    )
+
+
+def _solve(slots: list[RecItem], options: list[list[Match]]) -> list[Match | None]:
+    """Cheapest assignment with no listing used twice (small exhaustive search with pruning)."""
+    best: list = [None, None]  # [score, picks]
+
+    values = [_missing_value(item) for item in slots]
+
+    def dfs(i: int, picks: list[Match | None], used: set[int], state: tuple) -> None:
+        # state = (missing, missing value, cost) so far; each part only grows deeper in the
+        # search, so a state already worse than the best complete answer can be dropped.
+        if best[0] is not None and state > best[0][:3]:
+            return
+        if i == len(slots):
+            k = score_picks(picks, slots)
+            if best[0] is None or k < best[0]:
+                best[0], best[1] = k, list(picks)
+            return
+        missing, mval, cost = state
+        for m in options[i]:
+            lid = id(m.listing) if m.listing.id is None else m.listing.id
+            if lid in used:
+                continue
+            used.add(lid)
+            picks.append(m)
+            dfs(i + 1, picks, used, (missing, mval, cost + m.listing.price_ils))
+            picks.pop()
+            used.discard(lid)
+        picks.append(None)  # leave this item unfilled
+        dfs(i + 1, picks, used, (missing + 1, mval + values[i], cost))
+        picks.pop()
+
+    dfs(0, [], set(), (0, 0, 0))
+    return best[1]
+
+
+def _options(
+    items: list[RecItem],
+    listings: list[Listing],
+    condition_pref: str,
+    brand_for: Callable[[RecItem], str | None],
+) -> list[list[Match]]:
+    out = []
+    for item in items:
+        want = brand_for(item)
+        found = [
+            m
+            for listing in listings
+            if (m := match(item, listing, condition_pref)) is not None
+            and (want is None or normalize_brand(listing.brand) == want)
+        ]
+        found.sort(key=lambda m: (m.listing.price_ils, not m.verified_size, m.listing.id or 0))
+        out.append(found[:CANDIDATES_PER_SLOT])
+    return out
+
+
+def assemble(
+    rec: Recommendation,
+    listings: list[Listing],
+    brand_mode: str = "mixed",
+    condition_pref: str = "both",
+) -> Assembly:
+    """The cheapest way to buy this recommendation from the given listings."""
+    if brand_mode not in BRAND_MODES:
+        raise ValidationError(f"brands must be one of {', '.join(BRAND_MODES)}")
+    items = list(rec.items)
+    if brand_mode == "mixed":
+        options = _options(items, listings, condition_pref, lambda _: None)
+        result = Assembly(rec, list(zip(items, _solve(items, options), strict=True)), brand_mode)
+    else:
+        constrained = {"same": set(EQUIPMENT_TYPES), "kites_bar": {"kite", "bar"}}[brand_mode]
+        # Brands that have at least one listing for an item the brand rule applies to.
+        brands = sorted(
+            {
+                normalize_brand(listing.brand)
+                for listing in listings
+                if normalize_brand(listing.brand) and listing.type in constrained
+            }
+        )
+        if not any(item.type in constrained for item in items):
+            brands = [""]  # e.g. kites_bar when you already own kites and bar: no brand rule
+        elif not brands:
+            brands = [None]  # nothing branded: brand-bound items stay missing, others free
+        result = None
+        for brand in brands:
+
+            def brand_for(it: RecItem, b=brand) -> str | None:
+                if it.type not in constrained or b == "":
+                    return None
+                return b if b is not None else "\0no-brand"  # matches no listing
+
+            options = _options(items, listings, condition_pref, brand_for)
+            cand = Assembly(
+                rec, list(zip(items, _solve(items, options), strict=True)), brand_mode, brand or ""
+            )
+            if result is None or cand.score() < result.score():
+                result = cand
+    _add_warnings(result)
+    return result
+
+
+def _add_warnings(a: Assembly) -> None:
+    kite_brands = {
+        normalize_brand(m.listing.brand) or "unknown brand"
+        for item, m in a.picks
+        if m is not None and item.type == "kite"
+    }
+    bar_brands = {
+        normalize_brand(m.listing.brand) or "unknown brand"
+        for item, m in a.picks
+        if m is not None and item.type == "bar"
+    }
+    a.brand_conflict = len(kite_brands) > 1 or bool(
+        kite_brands and bar_brands and kite_brands != bar_brands
+    )
+    if len(kite_brands) > 1:
+        a.warnings.append(
+            f"Kites from different brands ({', '.join(sorted(kite_brands))}): one bar may not "
+            "fly them all — check compatibility or try --brands kites_bar."
+        )
+    elif kite_brands and bar_brands and kite_brands != bar_brands:
+        a.warnings.append(
+            f"Bar ({', '.join(sorted(bar_brands))}) and kite ({', '.join(sorted(kite_brands))}) "
+            "brands differ — check they are compatible."
+        )
+    unverified = [item.type for item, m in a.picks if m is not None and not m.verified_size]
+    if unverified:
+        a.warnings.append(f"Size not stated for: {', '.join(unverified)} — ask the seller.")
+
+
+def best_assembly_under(
+    build: Callable[[str], Recommendation],
+    listings: list[Listing],
+    budget: int | None,
+    brand_mode: str = "mixed",
+    condition_pref: str = "both",
+) -> Assembly:
+    """Best quiver (comfortable > minimum > one kite) that can be bought complete within the
+    budget from real listings; otherwise the cheapest complete one; otherwise the fullest."""
+    results = [assemble(build(v), listings, brand_mode, condition_pref) for v in QUIVER_VARIANTS]
+    complete = [r for r in results if r.complete]
+    if budget is not None:
+        fitting = [r for r in complete if r.total <= budget]
+        if fitting:
+            return fitting[0]  # results are already in best-first order
+    if complete:
+        return min(complete, key=lambda r: r.total)
+    return min(results, key=lambda r: r.score())

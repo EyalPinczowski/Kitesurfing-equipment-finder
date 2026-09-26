@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -15,6 +16,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from .models import (
     MARK_KINDS,
     MARK_STATUSES,
+    Listing,
     OwnedItem,
     Profile,
     RecItem,
@@ -186,6 +188,10 @@ MIGRATIONS: list[str] = [
     ALTER TABLE recommendation_items ADD COLUMN est_price_ils INTEGER;
     ALTER TABLE recommendations ADD COLUMN price_condition TEXT NOT NULL DEFAULT 'used';
     ALTER TABLE recommendations ADD COLUMN budget_ils INTEGER;
+    """,
+    """
+    ALTER TABLE listings ADD COLUMN subtype TEXT NOT NULL DEFAULT '';
+    ALTER TABLE listings ADD COLUMN size_label TEXT NOT NULL DEFAULT '';
     """,
 ]
 
@@ -458,6 +464,91 @@ class Database:
             "SELECT * FROM recommendations ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [self._rec_from_row(r) for r in rows]
+
+    # --- listings ---------------------------------------------------------------------------
+
+    def add_listing(
+        self, listing: Listing, source_id: str | None = None, item_index: int = 0
+    ) -> int:
+        """Store a listing (and the raw post it came from, keyed by source + source_id)."""
+        now = now_iso()
+        # Posts without a URL/id still need a unique key, or two of them would collide.
+        sid = source_id or listing.url or f"anon-{uuid.uuid4().hex}"
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO raw_posts (source, source_id, url, author, text, content_hash, "
+                "stage_status, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, "
+                "'extracted', ?, ?) ON CONFLICT(source, source_id) DO UPDATE SET "
+                "last_seen_at = excluded.last_seen_at",
+                (
+                    listing.source,
+                    sid,
+                    listing.url,
+                    listing.seller,
+                    listing.description,
+                    sid,
+                    now,
+                    now,
+                ),
+            )
+            rp = self.conn.execute(
+                "SELECT id FROM raw_posts WHERE source = ? AND source_id = ?", (listing.source, sid)
+            ).fetchone()["id"]
+            cur = self.conn.execute(
+                "INSERT INTO listings (raw_post_id, item_index, type, subtype, size_label, brand, "
+                "model, size, year, price_ils, is_new, location, description, sold, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    rp,
+                    item_index,
+                    listing.type,
+                    listing.subtype,
+                    listing.size_label,
+                    listing.brand,
+                    listing.model,
+                    listing.size,
+                    listing.year,
+                    listing.price_ils,
+                    None if listing.is_new is None else int(listing.is_new),
+                    listing.location,
+                    listing.description,
+                    int(listing.sold),
+                    now,
+                ),
+            )
+        listing.id = cur.lastrowid
+        return listing.id
+
+    def candidate_listings(self) -> list[Listing]:
+        """Listings that can still be bought: not sold and not dismissed by the user."""
+        rows = self.conn.execute(
+            "SELECT l.*, r.source, r.url, r.author FROM listings l "
+            "JOIN raw_posts r ON r.id = l.raw_post_id "
+            "WHERE l.sold = 0 AND NOT EXISTS (SELECT 1 FROM user_marks m WHERE "
+            "m.target_kind = 'listing' AND m.target_id = l.id AND m.status = 'dismissed') "
+            "ORDER BY l.id"
+        ).fetchall()
+        return [
+            Listing(
+                id=r["id"],
+                type=r["type"],
+                subtype=r["subtype"],
+                size_label=r["size_label"],
+                brand=r["brand"],
+                model=r["model"],
+                size=r["size"],
+                year=r["year"],
+                price_ils=r["price_ils"],
+                is_new=None if r["is_new"] is None else bool(r["is_new"]),
+                location=r["location"],
+                description=r["description"],
+                sold=bool(r["sold"]),
+                source=r["source"],
+                url=r["url"],
+                seller=r["author"],
+            )
+            for r in rows
+        ]
 
     # --- favorites / dismissals -------------------------------------------------------------
 

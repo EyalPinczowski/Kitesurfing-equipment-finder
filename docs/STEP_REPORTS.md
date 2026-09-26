@@ -155,3 +155,49 @@ Each build step ends with a self-review and a report on what was found.
 | 2 | Real market prices from collected listings, instead of the estimate table. | High | Step 5 |
 | 3 | Budget split hint, e.g. "spend more on the kite, buy the board used". | Low | Later |
 | 4 | Let you set your own prices for items in the table. | Low | Small |
+
+## Step 2d: build sets from the cheapest listings, with mixed or same brand
+
+**What was built**
+- `kitefinder/assemble.py` builds a recommended set from real listings. For each item it picks a matching listing, mixing sellers and sites (Facebook, Yad2, shop sites), to get the lowest total price.
+  - **Matching rules**:
+    - Kites must be within the recommended size range.
+    - Boards must be within 2 cm, and of a compatible kind.
+    - Bars match even when no width is stated; they're flagged as "unchecked".
+    - Harness size labels must overlap the recommended ones. `M`, `S/M` and `M-L` all match `M/L`.
+    - Foils must be the right part.
+    - Your new/used preference is respected. Sold, dismissed and unpriced listings are skipped.
+  - **Search**: an exact search that never uses one listing twice. When sets are incomplete, it ranks them by (items missing, value of what's missing), then price, then fewest sellers to pick up from, then sizes that were actually stated.
+  - **Brand modes** (`--brands`):
+    - `mixed` (the default): the cheapest listing of any brand for each item.
+    - `same`: every item from one brand.
+    - `kites_bar`: kites and bar from one brand, since bars usually only fly their own brand's kites. Board and harness can be any brand.
+  - Brand names are recognised in English and Hebrew (דואוטון → Duotone, קברינה → Cabrinha, …).
+  - **Warnings**: kites of different brands, or a bar of a different brand, trigger a compatibility warning plus the price of the compatible option. It also warns when a size isn't stated.
+- **`kitefinder assemble`** works on the active set (or `--set N`). `assemble --under 9000` picks the best quiver (comfortable, then minimum, then one kite) that can actually be bought complete within the budget from real listings.
+- DB: `add_listing` and `candidate_listings`, used by the Step 3–4 collectors. Migration v7 adds listing `subtype` and `size_label`. `Listing` fields after `size` must now be passed by name.
+
+**Tests**: 1,229 passed, 99% coverage.
+- The **exact search is checked against brute force** on 40 random markets, which confirms the cheapest set is always found.
+- Matching rules per item type.
+- Every brand mode.
+- The full text of the `assemble` output.
+- `--under`.
+
+**Issues found during the self-check and fixed**
+1. In `same` mode, a brand that had only a board beat one that had the kite, because it was cheaper. Incomplete sets are now ranked by the *value* of what's missing.
+2. That change had broken the search's pruning shortcut, which was still comparing the old score layout. Fixed; the pruning is still provably safe.
+3. Two listings with no URL from the same source collided in the DB.
+4. `Listing` positional arguments were easy to mix up; they're now keyword-only.
+5. Found by the code review: `kites_bar` returned nothing when there were no kites or bar to buy.
+6. Found by the code review: `assemble --under` saved the chosen set without its budget or prices, and didn't make it active.
+7. Found by the code review: negative prices were accepted.
+8. Found by the code review: "M-L" harness sizes didn't match.
+9. Two of my own expected totals in tests were wrong. The solver was right and found cheaper combinations, such as a 9 m² filling the 10 m² slot.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Add pickup distance to the cost, using the travel limit from your profile. For example, prefer one seller in Haifa over three across the country for ₪100 more. | Medium | Step 5 (needs listing locations) |
+| 2 | Kite–bar compatibility table by brand and year (e.g. Duotone bars and older North kites), instead of treating every brand pair as a warning. | Medium | Later |
+| 3 | A shop "deal" alert when a new-item price drops below the used estimate. | Low | Step 5 |

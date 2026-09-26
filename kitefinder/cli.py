@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from . import pricing
+from . import assemble, pricing
 from .config import load_settings
 from .db import Database
 from .models import (
@@ -219,6 +219,26 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PRICE",
         help="the best set within this price in ₪ (no number: your profile budget)",
     )
+    asm = sub.add_parser(
+        "assemble", help="build a set from the cheapest listings, mixing sellers and sites"
+    )
+    asm.add_argument("--set", type=int, dest="set_id", help="recommendation id (default: active)")
+    asm.add_argument(
+        "--brands",
+        choices=assemble.BRAND_MODES,
+        default="mixed",
+        help="mixed = cheapest of any brand; same = one brand for everything; "
+        "kites_bar = kites and bar from one brand (bar compatibility)",
+    )
+    asm.add_argument(
+        "--under",
+        type=int,
+        nargs="?",
+        const=-1,
+        metavar="PRICE",
+        help="best quiver you can buy within this price from real listings "
+        "(no number: your profile budget)",
+    )
     us = sub.add_parser("use", help="choose which saved set searches use")
     us.add_argument("id", type=int)
 
@@ -372,6 +392,110 @@ def _recommend_sets(db: Database, prof: Profile, option: str | None) -> str:
     return "\n\n".join(parts) + "\n\n" + "\n".join(footer)
 
 
+def _item_short(item: RecItem) -> str:
+    if item.type == "harness":
+        return f"harness {item.subtype}"
+    kind = f"{item.type} {item.subtype}" if item.subtype else item.type
+    unit = item.unit or ""
+    sep = "" if unit in ("m²", "") else " "
+    return f"{kind} {item.size:g}{sep}{unit}" if item.size is not None else kind
+
+
+def _listing_line(listing) -> str:
+    brand = assemble.normalize_brand(listing.brand)
+    name = " ".join(x for x in (brand, listing.model) if x) or listing.type
+    size = f" {fmt_size(listing.type, listing.size)}" if listing.size is not None else ""
+    if listing.size_label:
+        size = f" size {listing.size_label}"
+    year = f" {listing.year}" if listing.year else ""
+    cond = {True: "new", False: "used", None: "condition not stated"}[listing.is_new]
+    where = listing.location or "location unknown"
+    link = f" · {listing.url}" if listing.url else ""
+    return (
+        f"{name}{size}{year} · {ils(listing.price_ils)} {cond} · {where} · {listing.source}{link}"
+    )
+
+
+def format_assembly(a: assemble.Assembly, budget: int | None = None) -> str:
+    rec = a.rec
+    mode = {
+        "mixed": "mixed brands",
+        "same": f"all {a.brand}" if a.brand else "one brand",
+        "kites_bar": f"{a.brand} kites and bar" if a.brand else "one brand for kites and bar",
+    }[a.brand_mode]
+    found = len(a.picks) - len(a.missing)
+    n = len(a.sellers)
+    head = (
+        f"Cheapest set from listings ({mode}) for recommendation #{rec.id} ({rec.variant}): "
+        f"{ils(a.total)} from {n} seller{'s' if n != 1 else ''}."
+    )
+    if not a.complete:
+        head = (
+            f"Partial set from listings ({mode}) for recommendation #{rec.id} ({rec.variant}): "
+            f"{found} of {len(a.picks)} items found, {ils(a.total)} so far."
+        )
+    lines = [head]
+    for item, m in a.picks:
+        lines.append(
+            f"• {_item_short(item)} → {_listing_line(m.listing) if m else 'not found yet'}"
+        )
+    if a.missing:
+        lines.append(
+            "Missing: " + ", ".join(_item_short(i) for i in a.missing) + " (still looking)."
+        )
+    lines.extend(f"⚠ {w}" for w in a.warnings)
+    if a.complete and budget is not None:
+        lines.append(budget_line(a.total, budget))
+    return "\n".join(lines)
+
+
+def _assemble_cmd(db: Database, a: argparse.Namespace) -> str:
+    prof = db.get_profile()
+    if prof is None:
+        raise ValidationError("set up your profile first: kitefinder profile set ...")
+    listings = db.candidate_listings()
+    if not listings:
+        return "No listings collected yet — they arrive once the collectors run."
+    if a.under is not None:
+        if a.set_id is not None:
+            raise ValidationError("--under picks the quiver itself; drop --set")
+        budget = prof.budget_ils if a.under == -1 else a.under
+        if budget is None:
+            raise ValidationError("give a price (--under 9000) or set a budget first")
+        if budget < 0:
+            raise ValidationError("the price can't be negative")
+        owned = db.list_owned()
+        result = assemble.best_assembly_under(
+            lambda v: quiver.recommend_set(prof, owned, v),
+            listings,
+            budget,
+            a.brands,
+            prof.condition_pref,
+        )
+        # Save it like `recommend --under` does: estimates, budget, and active when it fits.
+        result.rec.budget_ils = budget
+        _priced(prof, result.rec)
+        db.save_recommendation(result.rec)
+        if result.complete and result.total <= budget:
+            db.set_active_recommendation(result.rec.id)
+        return format_assembly(result, budget)
+    rec = db.get_recommendation(a.set_id) if a.set_id else db.latest_recommendation()
+    if rec is None or rec.kind != "set":
+        raise ValidationError("no saved set to assemble — run: kitefinder recommend")
+    result = assemble.assemble(rec, listings, a.brands, prof.condition_pref)
+    text = format_assembly(result, rec.budget_ils)
+    if a.brands == "mixed" and result.brand_conflict:
+        alt = assemble.assemble(rec, listings, "kites_bar", prof.condition_pref)
+        if alt.complete or not result.complete:
+            extra = alt.total - result.total
+            text += (
+                f"\nWith kites and bar from one brand ({alt.brand}): {ils(alt.total)}"
+                f"{f' (+{ils(extra)})' if extra > 0 else ''}"
+                f"{'' if alt.complete else ', incomplete'} — kitefinder assemble --brands kites_bar"
+            )
+    return text
+
+
 def _recommend_under(db: Database, prof: Profile, budget: int) -> str:
     owned = db.list_owned()
 
@@ -465,6 +589,8 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
                     raise ValidationError("the price can't be negative")
                 return _recommend_under(db, prof, budget)
             return _recommend_sets(db, prof, a.option)
+        if a.cmd == "assemble":
+            return _assemble_cmd(db, a)
         if a.cmd == "use":
             db.set_active_recommendation(a.id)
             return f"Searches will use set #{a.id}."

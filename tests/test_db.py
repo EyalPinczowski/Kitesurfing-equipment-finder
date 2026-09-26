@@ -537,3 +537,49 @@ def test_prices_and_budget_roundtrip(db, profile):
     got = db.get_recommendation(rec.id)
     assert (got.variant, got.price_condition, got.budget_ils) == ("one_kite", "new", 9000)
     assert got.items[0].est_price_ils == 2800
+
+
+# --- listings ---------------------------------------------------------------------------------
+
+
+def test_add_listing_roundtrip_and_anonymous_posts_do_not_collide(db):
+    from kitefinder.models import Listing
+
+    a = Listing("kite", 2600, "North", "Orbit", 13, year=2022, is_new=False, location="Haifa",
+                description="nice", source="yad2", url="https://yad2.co.il/i/2", seller="Noa")  # fmt: skip
+    db.add_listing(a)
+    for _ in range(3):  # same source, no URL, same second
+        db.add_listing(Listing("harness", 600, "ION", size_label="M", source="facebook"))
+    got = db.candidate_listings()
+    assert len(got) == 4
+    first = got[0]
+    assert (first.brand, first.size, first.is_new, first.source, first.url, first.seller) == (
+        "North",
+        13,
+        False,
+        "yad2",
+        "https://yad2.co.il/i/2",
+        "Noa",
+    )
+    assert got[1].size_label == "M" and got[1].is_new is None
+
+
+def test_candidates_exclude_sold_and_dismissed(db):
+    from kitefinder.models import Listing
+
+    keep = db.add_listing(Listing("kite", 1, size=9, url="u1"))
+    db.add_listing(Listing("kite", 1, size=9, url="u2", sold=True))
+    gone = db.add_listing(Listing("kite", 1, size=9, url="u3"))
+    fav = db.add_listing(Listing("kite", 1, size=9, url="u4"))
+    db.set_mark("listing", gone, "dismissed")
+    db.set_mark("listing", fav, "favorite")
+    assert [x.id for x in db.candidate_listings()] == [keep, fav]
+
+
+def test_multi_item_post_shares_raw_post(db):
+    from kitefinder.models import Listing
+
+    db.add_listing(Listing("kite", 1, size=9, source="facebook"), source_id="post-1", item_index=0)
+    db.add_listing(Listing("kite", 1, size=12, source="facebook"), source_id="post-1", item_index=1)
+    assert db.conn.execute("SELECT COUNT(*) FROM raw_posts").fetchone()[0] == 1
+    assert len(db.candidate_listings()) == 2
