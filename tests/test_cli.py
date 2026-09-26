@@ -769,3 +769,173 @@ def test_brand_alternative_line_marks_estimates(db):
     out = run(db, "assemble")
     assert "Bar (North) and kite (Duotone) brands differ" in out
     assert "With kites and bar from one brand (North): ~₪" in out
+
+
+# --- step 3: extract / assess / llm --------------------------------------------------------------
+
+MULTI = 'מוכר את כל הציוד:\nקייט קברינה 12 מטר 2019 - 2500 ש"ח\nבר 52 ס"מ - 1000 ש"ח\nטרפז ION מידה M - 400 ש"ח\nנתניה'
+
+
+def test_extract_rules_full_output_and_save(db, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    out = run(
+        db, "extract", "--text", MULTI, "--save", "--source", "facebook", "--url", "https://fb/p/9"
+    )
+    assert out == (
+        "Found 3 items (rules):\n"
+        "• kite 12m² Cabrinha 2019 · ₪2,500 · Netanya\n"
+        "• bar 52 cm · ₪1,000 · Netanya\n"
+        "• harness size M ION · ₪400 · Netanya\n"
+        "(fallback: no Gemini key)\n"
+        "Saved as listings #1, #2, #3"
+    )
+    listings = db.candidate_listings()
+    assert [x.type for x in listings] == ["kite", "bar", "harness"]
+    assert all(x.source == "facebook" and x.url == "https://fb/p/9" for x in listings)
+    # saving the same post again adds its items under the same raw post
+    assert db.conn.execute("SELECT COUNT(*) FROM raw_posts").fetchone()[0] == 1
+
+
+def test_extract_not_sale_bundle_flags_and_file(db, tmp_path, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert (
+        run(db, "extract", "--text", "מחפש קייט 9 מטר", "--rules")
+        == "Not a sale post: looking to buy (rules)"
+    )
+    f = tmp_path / "post.txt"
+    f.write_text('סט: קייט 10 מטר ובר, הכל ב-4500 ש"ח. נמכר', encoding="utf-8")
+    out = run(db, "extract", "--file", str(f), "--rules", "--save")
+    assert "notes: sold_as_bundle" in out and "Sold together for ₪4,500." in out
+    assert out.endswith("Saved as listings #1, #2")
+
+
+def test_extract_uses_gemini_when_key_set(db, monkeypatch):
+    from fakes import FakeTransport, gemini_reply
+
+    from kitefinder.llm import gemini as gm
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    answer = {"is_sale_post": True, "location": "Haifa",
+              "items": [{"type": "kite", "brand": "North", "model": "Orbit", "size": 12, "year": 2021,
+                         "price_ils": 3200, "is_new": False, "sold": False, "description": "d"}]}  # fmt: skip
+    transport = FakeTransport(lambda body: (200, gemini_reply(answer), {}))
+    real = gm.GeminiClient
+    monkeypatch.setattr(
+        gm, "GeminiClient", lambda *a, **k: real(*a, **{**k, "transport": transport})
+    )
+    out = run(db, "extract", "--text", 'קייט North Orbit 12 מטר 2021 ב-3200 ש"ח חיפה')
+    assert out == "Found 1 item (gemini):\n• kite 12m² North Orbit 2021 · ₪3,200 used · Haifa"
+    assert run(db, "llm", "status") == (
+        f"Gemini model: {gm.DEFAULT_MODEL}\nCalls today: 1 of {gm.DEFAULT_RPD} (then offline rules)\n"
+        f"Pace: at most {gm.DEFAULT_RPM} calls per minute"
+    )
+
+
+def test_llm_without_key(db, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert run(db, "llm", "status").startswith("Gemini: no API key")
+    with pytest.raises(ValidationError, match="needs a Gemini API key"):
+        run(db, "assess", __file__)
+
+
+def test_llm_models_and_assess(db, monkeypatch, tmp_path):
+    import io
+
+    from fakes import FakeTransport, gemini_reply
+    from PIL import Image
+
+    from kitefinder.llm import gemini as gm
+    from kitefinder.models import Listing
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+
+    def responder(body):
+        if body is None:
+            return (
+                200,
+                {
+                    "models": [
+                        {
+                            "name": "models/gemini-x",
+                            "supportedGenerationMethods": ["generateContent"],
+                        }
+                    ]
+                },
+                {},
+            )
+        return (
+            200,
+            gemini_reply(
+                {"score": 6, "flags": ["repair_patch"], "verdict": "Ask about the patch."}
+            ),
+            {},
+        )
+
+    transport = FakeTransport(responder)
+    real = gm.GeminiClient
+    monkeypatch.setattr(
+        gm, "GeminiClient", lambda *a, **k: real(*a, **{**k, "transport": transport})
+    )
+    assert run(db, "llm", "models") == "gemini-x"
+    photo = tmp_path / "p.jpg"
+    buf = io.BytesIO()
+    Image.new("RGB", (30, 30)).save(buf, "JPEG")
+    photo.write_bytes(buf.getvalue())
+    lid = db.add_listing(Listing("kite", 2000, size=12, url="x"))
+    out = run(db, "assess", str(photo), "--listing", str(lid))
+    assert out == "Condition: 6/10 — repair patch or glued repair\nAsk about the patch."
+    assert db.get_assessment(lid)["score"] == 6
+
+
+def test_extract_save_twice_and_missing_file(db, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    text = 'מוכר קייט 12 מטר ב-4500 ש"ח'
+    run(db, "extract", "--text", text, "--rules", "--save")
+    out = run(db, "extract", "--text", text, "--rules", "--save")
+    assert out.endswith("Saved as listing #1") and "(fallback: rules requested (--rules))" in out
+    with pytest.raises(ValidationError, match="no such file"):
+        run(db, "extract", "--file", "/nope/post.txt")
+
+
+def test_assess_checks_listing_and_photos_before_spending_quota(db, monkeypatch, tmp_path):
+    from fakes import FakeTransport, gemini_reply
+
+    from kitefinder.llm import gemini as gm
+    from kitefinder.models import Listing
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    transport = FakeTransport(
+        lambda body: (200, gemini_reply({"score": 5, "flags": [], "verdict": "v"}), {})
+    )
+    real = gm.GeminiClient
+    monkeypatch.setattr(
+        gm, "GeminiClient", lambda *a, **k: real(*a, **{**k, "transport": transport})
+    )
+    junk = tmp_path / "photo.heic"
+    junk.write_bytes(b"not a jpeg")
+    with pytest.raises(ValidationError, match="no listing with id 999"):
+        run(db, "assess", str(junk), "--listing", "999")
+    with pytest.raises(ValidationError, match="no such photo"):
+        run(db, "assess", str(tmp_path / "missing.jpg"))
+    lid = db.add_listing(Listing("kite", 2000, size=12, url="x"))
+    db.save_assessment(lid, 7.0, [], "good")
+    out = run(db, "assess", str(junk), "--listing", str(lid))
+    assert out == "No usable photos (JPEG, PNG or WebP) — nothing was saved."
+    assert db.get_assessment(lid)["score"] == 7.0  # the earlier assessment is kept
+    assert transport.requests == []
+
+
+def test_main_reports_gemini_errors(monkeypatch, tmp_path, capsys):
+    from fakes import FakeTransport
+
+    from kitefinder.llm import gemini as gm
+
+    monkeypatch.setenv("KITEFINDER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GEMINI_API_KEY", "bad")
+    transport = FakeTransport(lambda body: (403, {"error": {"message": "API key not valid"}}, {}))
+    real = gm.GeminiClient
+    monkeypatch.setattr(
+        gm, "GeminiClient", lambda *a, **k: real(*a, **{**k, "transport": transport})
+    )
+    assert cli.main(["llm", "models"]) == 3
+    assert "Gemini error 403: API key not valid" in capsys.readouterr().err

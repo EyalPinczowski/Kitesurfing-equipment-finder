@@ -222,3 +222,71 @@ Each build step ends with a self-review and a report on what was found.
 2. An unknown price beat real prices just above typical.
 3. `assemble --under` treated a total with guessed prices as a confirmed fit and made that set active.
 4. The one-brand comparison line didn't mark estimates with "~".
+
+## Step 3: Gemini client, post extraction, condition from photos
+
+**What was built**
+- `kitefinder/llm/gemini.py`: a free-tier Gemini REST client using plain `requests`, so Termux doesn't need the SDK or anything compiled.
+  - The API key is sent in a header, never in the URL.
+  - Answers are structured JSON (a response schema), and every answer is cached in SQLite, so the same post never costs a second call.
+  - Pacing: at most 8 calls a minute and 200 a day by default, both configurable in `.env`.
+  - Retries follow the server's suggested delay on 429, and also cover 5xx and network errors.
+  - Errors are clear: `QuotaExceeded` or `LLMError`.
+- `kitefinder/llm/extract.py`: the prompt and schema for reading a post (Hebrew or English).
+  - It extracts every item, with type, subtype, brand, model, size, harness size, year, price, new/used, sold, location and a bundle price.
+  - **Anti-hallucination check**: any size, price, year or bundle price the model returns that doesn't appear in the post text is dropped and flagged. The check knows the equivalent ways of writing a number (3.2k, 3,200, 5'4" → 163 cm, 6' → 183 cm, '21 or מודל 21 → 2021).
+  - Implausible values are dropped too, such as a phone number as a price or a bar width as a kite size.
+  - **Prompt-injection guard**: the post is marked as data, and it can't close its `<post>` block early.
+  - Falls back to the rules when there's no key, the quota is used up, or Gemini or the network fails.
+- `kitefinder/llm/rules.py`: an offline rule-based extractor that returns the same JSON shape as Gemini.
+  - Hebrew prefixes (ה/ו/ב/ל…) are handled without false matches (כבר ≠ בר).
+  - Plurals (קייטים, טרפזים), and multiple items on one line ("9 מטר ב-2400 ו-12 מטר ב-2900").
+  - Model names imply the gear type ("Duotone Evo 10m"), but only when a brand or size is nearby.
+  - "kite" used to describe another item ("משאבה לקייט", "kite surfboard") isn't counted as a kite; foil kites are recognised; foil parts are merged into the complete foil.
+  - Bundle prices, and prices without a currency sign after a dash.
+  - Sale, sold, "wanted" and lesson/trip wording.
+- `kitefinder/llm/normalize.py`: shared parsers for prices, sizes (m², cm, feet, litres), years, gear types, harness sizes, brands (Hebrew too), and 35 Israeli cities (each spelling mapped to one canonical name).
+- `kitefinder/llm/vision.py`: condition from up to 4 photos.
+  - Photos are shrunk to 1024 px JPEG with Pillow, when it's installed.
+  - The score is clamped to 1–10, flags come from a fixed list, and catalogue or stock photos get no score.
+  - Contradictory "looks like new" plus damage flags are resolved in favour of the damage.
+- CLI:
+  - `kitefinder extract --text/--file [--save] [--rules] [--source] [--url]`: read a post by hand and optionally add it. This also serves as the "manual paste" source.
+  - `kitefinder assess photo… [--listing N]`
+  - `kitefinder llm status|models`
+- DB migration v8 adds listing flags, the extraction method and the bundle price, plus image and assessment helpers. Saving the same post again now updates it.
+
+**Tests**: 1,811 offline tests passed, 99% coverage. The 79 live tests skip without a key.
+- **Labelled corpus**: 59 tuning posts plus 20 held-out posts, synthetic but written in the style of Israeli FB, Yad2 and shop posts.
+- **Gemini path (offline)**: for every post, 4 variants of messy-but-correct model answers are served by a fake Gemini server through the real client. The cleaned result must equal the hand labels exactly: 316 checks.
+- **Rules fallback**:
+  - Tuning set: 59/59 posts fully right. This is a regression guard only, since the rules were tuned on it.
+  - **Held-out set, never tuned on: 17/20 posts fully right**. Sale/not-sale 18/20, types 21/23, sizes 14/16, **prices 20/20**, brands 18/21, years 13/15.
+  - The misses: a question containing "מוכר" ("someone selling…?"), a price written as "1800 כל אחד" with no currency sign, and a brand that has to be inferred from a model name.
+- **Live suite** (`pytest -m live`, needs a key): runs the real model on all 79 labelled posts and requires the right sale decision, item count, types and sizes. With `KITEFINDER_RECORD=1` it also saves the answers for review. **Not run yet: no key in this environment.** Gemini itself is reachable from here.
+
+**Issues found during the self-check and fixed**
+1. The rules, first version: only 47/59 posts were classified correctly. The fixes were the rules for model names, plurals, modifiers and bundles described above.
+2. Scoring 100% on the tuning set proved nothing, since it was overfitted. A held-out set was added and scored honestly.
+3. A post containing `</post>` could break out of the data block (prompt injection).
+4. "the edge of the board" produced a phantom kite, because "Edge" is a kite model.
+5. Found by the code review: network errors skipped the rules fallback.
+6. Found by the code review: saving a post twice crashed.
+7. Found by the code review: "כבר" and "שבר" matched "bar".
+8. Found by the code review: prices (ב 2000 ש"ח) and feet (5'10) were read as years.
+9. Found by the code review: `assess` and `llm` crashed with tracebacks, and an unknown `--listing` used up quota first.
+10. Found by the code review: whole-feet sizes were dropped.
+11. Found by the code review: `GEMINI_MODEL`, `GEMINI_RPM` and `GEMINI_RPD` in `.env` were ignored.
+12. Found by the code review: an empty photo check overwrote a saved assessment.
+13. Found by the code review: `--rules` reported "no key".
+14. Found by the code review: all photos were resized when only 4 were needed.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Run the live suite with your key and review the recordings. That gives the real Gemini accuracy on Hebrew posts. | High | As soon as a key exists |
+| 2 | Add real posts from your groups and the 6 sites to the corpus: more realistic than synthetic ones. | High | Step 4 (needs network) |
+| 3 | Price per item from "X כל אחד" / "each" wording (a held-out miss). | Medium | Small |
+| 4 | Batch several short posts into one Gemini call to stretch the free daily quota. | Medium | Step 5 |
+| 5 | Verify the kite size charts live via Gemini (Step 2's open item). | Medium | With the key |
+| 6 | Accept HEIC photos (iPhone). This needs a converter, since Pillow can't read them by default. | Low | Later |

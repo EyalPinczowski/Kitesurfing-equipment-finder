@@ -155,4 +155,7 @@ class Listing:
     source: str = ""  # facebook / yad2 / site host
     url: str = ""
     seller: str = ""
+    flags: list[str] = field(default_factory=list)  # extraction notes, e.g. "size_not_in_text"
+    extracted_by: str = ""  # "gemini" | "rules" | "" (entered by hand)
+    bundle_price_ils: int | None = None  # the post's one price for several items together
     id: int | None = None

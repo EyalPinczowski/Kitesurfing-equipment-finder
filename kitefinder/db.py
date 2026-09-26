@@ -193,6 +193,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE listings ADD COLUMN subtype TEXT NOT NULL DEFAULT '';
     ALTER TABLE listings ADD COLUMN size_label TEXT NOT NULL DEFAULT '';
     """,
+    """
+    ALTER TABLE listings ADD COLUMN flags TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE listings ADD COLUMN extracted_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE listings ADD COLUMN bundle_price_ils INTEGER;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -494,10 +499,20 @@ class Database:
             rp = self.conn.execute(
                 "SELECT id FROM raw_posts WHERE source = ? AND source_id = ?", (listing.source, sid)
             ).fetchone()["id"]
-            cur = self.conn.execute(
+            # the same post seen again (or edited) updates its items instead of duplicating them
+            self.conn.execute(
                 "INSERT INTO listings (raw_post_id, item_index, type, subtype, size_label, brand, "
-                "model, size, year, price_ils, is_new, location, description, sold, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "model, size, year, price_ils, is_new, location, description, sold, created_at, "
+                "flags, extracted_by, bundle_price_ils) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(raw_post_id, item_index) DO UPDATE SET type = excluded.type, "
+                "subtype = excluded.subtype, size_label = excluded.size_label, "
+                "brand = excluded.brand, model = excluded.model, size = excluded.size, "
+                "year = excluded.year, price_ils = excluded.price_ils, is_new = excluded.is_new, "
+                "location = excluded.location, description = excluded.description, "
+                "sold = excluded.sold, flags = excluded.flags, "
+                "extracted_by = excluded.extracted_by, "
+                "bundle_price_ils = excluded.bundle_price_ils",
                 (
                     rp,
                     item_index,
@@ -514,9 +529,14 @@ class Database:
                     listing.description,
                     int(listing.sold),
                     now,
+                    json.dumps(listing.flags, ensure_ascii=False),
+                    listing.extracted_by,
+                    listing.bundle_price_ils,
                 ),
             )
-        listing.id = cur.lastrowid
+            listing.id = self.conn.execute(
+                "SELECT id FROM listings WHERE raw_post_id = ? AND item_index = ?", (rp, item_index)
+            ).fetchone()["id"]
         return listing.id
 
     def candidate_listings(self) -> list[Listing]:
@@ -546,9 +566,44 @@ class Database:
                 source=r["source"],
                 url=r["url"],
                 seller=r["author"],
+                flags=json.loads(r["flags"]),
+                extracted_by=r["extracted_by"],
+                bundle_price_ils=r["bundle_price_ils"],
             )
             for r in rows
         ]
+
+    def add_listing_images(self, listing_id: int, urls: list[str]) -> None:
+        with self.conn:
+            self.conn.executemany(
+                "INSERT INTO listing_images (listing_id, url) VALUES (?, ?)",
+                [(listing_id, u) for u in urls],
+            )
+
+    def listing_images(self, listing_id: int) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT url FROM listing_images WHERE listing_id = ? ORDER BY id", (listing_id,)
+        ).fetchall()
+        return [r["url"] for r in rows]
+
+    def save_assessment(self, listing_id: int, score, flags: list[str], verdict: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO image_assessments (listing_id, score, flags, verdict, created_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(listing_id) DO UPDATE SET score = "
+                "excluded.score, flags = excluded.flags, verdict = excluded.verdict, "
+                "created_at = excluded.created_at",
+                (listing_id, score, json.dumps(flags), verdict, now_iso()),
+            )
+
+    def get_assessment(self, listing_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT score, flags, verdict FROM image_assessments WHERE listing_id = ?",
+            (listing_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"score": row["score"], "flags": json.loads(row["flags"]), "verdict": row["verdict"]}
 
     # --- favorites / dismissals -------------------------------------------------------------
 

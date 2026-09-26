@@ -583,3 +583,39 @@ def test_multi_item_post_shares_raw_post(db):
     db.add_listing(Listing("kite", 1, size=12, source="facebook"), source_id="post-1", item_index=1)
     assert db.conn.execute("SELECT COUNT(*) FROM raw_posts").fetchone()[0] == 1
     assert len(db.candidate_listings()) == 2
+
+
+def test_listing_flags_method_bundle_roundtrip_and_images(db):
+    from kitefinder.models import Listing
+
+    lid = db.add_listing(Listing("kite", None, "North", size=12, url="p1", flags=["sold_as_bundle"],
+                                 extracted_by="gemini", bundle_price_ils=4500))  # fmt: skip
+    (got,) = db.candidate_listings()
+    assert (got.flags, got.extracted_by, got.bundle_price_ils) == (
+        ["sold_as_bundle"],
+        "gemini",
+        4500,
+    )
+    db.add_listing_images(lid, ["https://img/1.jpg", "https://img/2.jpg"])
+    assert db.listing_images(lid) == ["https://img/1.jpg", "https://img/2.jpg"]
+    assert db.get_assessment(lid) is None
+    db.save_assessment(lid, 7.0, ["uv_faded"], "tired cloth")
+    db.save_assessment(lid, 6.5, ["uv_faded", "tear"], "small tear")  # replaces
+    assert db.get_assessment(lid) == {
+        "score": 6.5,
+        "flags": ["uv_faded", "tear"],
+        "verdict": "small tear",
+    }
+
+
+def test_same_post_saved_twice_updates_items(db):
+    """Review regression: re-saving a post crashed on UNIQUE(raw_post_id, item_index)."""
+    from kitefinder.models import Listing
+
+    first = db.add_listing(Listing("kite", 3000, size=12, source="facebook"), source_id="p1")
+    again = db.add_listing(
+        Listing("kite", 2500, size=12, source="facebook"), source_id="p1"
+    )  # price drop
+    assert first == again
+    (listing,) = db.candidate_listings()
+    assert listing.price_ils == 2500

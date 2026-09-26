@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from . import assemble, pricing
 from .config import load_settings
 from .db import Database
+from .llm.gemini import LLMError
 from .models import (
     CONDITION_PREFS,
     EQUIPMENT_TYPES,
@@ -250,6 +251,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="best quiver you can buy within this price from real listings "
         "(no number: your profile budget)",
     )
+    ex = sub.add_parser("extract", help="read a post and list the gear it sells (test / add)")
+    src = ex.add_mutually_exclusive_group(required=True)
+    src.add_argument("--text", help="the post text")
+    src.add_argument("--file", help="a file with the post text")
+    ex.add_argument("--save", action="store_true", help="store the listings it finds")
+    ex.add_argument("--source", default="manual", help="where the post is from (facebook, yad2…)")
+    ex.add_argument("--url", default="", help="link to the post")
+    ex.add_argument("--rules", action="store_true", help="skip Gemini, use the offline rules")
+
+    ev = sub.add_parser("assess", help="judge gear condition from photos (Gemini)")
+    ev.add_argument("photos", nargs="+", help="image files")
+    ev.add_argument("--listing", type=int, help="save the result on this listing")
+    ev.add_argument("--what", default="kitesurfing equipment", help="what the photos show")
+
+    llm = sub.add_parser("llm", help="Gemini status").add_subparsers(dest="action", required=True)
+    llm.add_parser("status", help="model, key and today's usage")
+    llm.add_parser("models", help="models your key can use")
+
     us = sub.add_parser("use", help="choose which saved set searches use")
     us.add_argument("id", type=int)
 
@@ -520,6 +539,101 @@ def _assemble_cmd(db: Database, a: argparse.Namespace) -> str:
     return text
 
 
+def _gemini(db: Database, required: bool = False):
+    from .llm.gemini import client_from_settings
+
+    client = client_from_settings(load_settings(), db=db)
+    if client is None and required:
+        raise ValidationError("this needs a Gemini API key: add GEMINI_API_KEY to .env")
+    return client
+
+
+def format_extracted(result) -> str:
+    method = result.method
+    if result.status != "listing":
+        return f"Not a sale post: {result.reason} ({method})"
+    lines = [
+        f"Found {len(result.listings)} item{'s' if len(result.listings) != 1 else ''} ({method}):"
+    ]
+    for listing in result.listings:
+        brand = " ".join(x for x in (listing.brand, listing.model) if x)
+        kind = f"{listing.type} {listing.subtype}" if listing.subtype else listing.type
+        size = f" {fmt_size(listing.type, listing.size)}" if listing.size is not None else ""
+        if listing.size_label:
+            size = f" size {listing.size_label}"
+        year = f" {listing.year}" if listing.year else ""
+        price = ils(listing.price_ils) if listing.price_ils is not None else "no price"
+        cond = {True: " new", False: " used", None: ""}[listing.is_new]
+        sold = " · SOLD" if listing.sold else ""
+        lines.append(
+            f"• {kind}{size}{f' {brand}' if brand else ''}{year} · {price}{cond}"
+            f" · {listing.location or 'location unknown'}{sold}"
+        )
+        if listing.flags:
+            lines.append(f"  notes: {', '.join(listing.flags)}")
+    if result.bundle_price_ils:
+        lines.append(f"Sold together for {ils(result.bundle_price_ils)}.")
+    lines.extend(f"({f})" for f in result.flags)
+    return "\n".join(lines)
+
+
+def _extract_cmd(db: Database, a: argparse.Namespace) -> str:
+    import hashlib
+    from pathlib import Path
+
+    from .llm.extract import extract_post
+
+    if a.file is not None and not Path(a.file).is_file():
+        raise ValidationError(f"no such file: {a.file}")
+    text = a.text if a.text is not None else Path(a.file).read_text(encoding="utf-8")
+    client = None if a.rules else _gemini(db)
+    reason = "rules requested (--rules)" if a.rules else "no Gemini key"
+    result = extract_post(text, client, source=a.source, url=a.url, no_client_reason=reason)
+    out = format_extracted(result)
+    if a.save and result.status == "listing":
+        post_id = a.url or "text-" + hashlib.sha256(text.encode()).hexdigest()[:16]
+        ids = [
+            db.add_listing(listing, source_id=post_id, item_index=i)
+            for i, listing in enumerate(result.listings)
+        ]
+        out += f"\nSaved as listing{'s' if len(ids) != 1 else ''} " + ", ".join(
+            f"#{i}" for i in ids
+        )
+    return out
+
+
+def _assess_cmd(db: Database, a: argparse.Namespace) -> str:
+    from pathlib import Path
+
+    from .llm import vision
+
+    if a.listing is not None and not db._target_exists("listing", a.listing):
+        raise ValidationError(f"no listing with id {a.listing}")  # before spending quota
+    missing = [p for p in a.photos if not Path(p).is_file()]
+    if missing:
+        raise ValidationError(f"no such photo: {', '.join(missing)}")
+    photos = [Path(p).read_bytes() for p in a.photos]
+    result = vision.assess(_gemini(db, required=True), photos, a.what)
+    if not result.photos_used:
+        return "No usable photos (JPEG, PNG or WebP) — nothing was saved."
+    if a.listing is not None:
+        db.save_assessment(a.listing, result.score, result.flags, result.verdict)
+    return f"Condition: {result.summary}\n{result.verdict}"
+
+
+def _llm_cmd(db: Database, a: argparse.Namespace) -> str:
+    client = _gemini(db)
+    if client is None:
+        return "Gemini: no API key (GEMINI_API_KEY in .env). Posts are read with offline rules."
+    if a.action == "models":
+        return "\n".join(client.list_models())
+    return (
+        f"Gemini model: {client.model}\n"
+        f"Calls today: {client.calls_today()} of {client.rpd} (then offline rules)\n"
+        f"Pace: at most {client.rpm} calls per minute"
+    )
+
+
 def _recommend_under(db: Database, prof: Profile, budget: int) -> str:
     owned = db.list_owned()
 
@@ -615,6 +729,12 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
             return _recommend_sets(db, prof, a.option)
         if a.cmd == "assemble":
             return _assemble_cmd(db, a)
+        if a.cmd == "extract":
+            return _extract_cmd(db, a)
+        if a.cmd == "assess":
+            return _assess_cmd(db, a)
+        if a.cmd == "llm":
+            return _llm_cmd(db, a)
         if a.cmd == "use":
             db.set_active_recommendation(a.id)
             return f"Searches will use set #{a.id}."
@@ -666,6 +786,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValidationError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
+    except LLMError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 3
     except PermissionError as e:
         hint = " (in Termux run termux-setup-storage first)" if "/sdcard" in str(e) else ""
         print(f"Error: permission denied: {e.filename}{hint}", file=sys.stderr)

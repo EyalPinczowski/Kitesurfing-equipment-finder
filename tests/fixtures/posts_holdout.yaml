@@ -1,0 +1,174 @@
+# Held-out posts: written AFTER the rule-based extractor was tuned on posts.yaml, and never used
+# for tuning. Their score is the honest estimate of the fallback's accuracy on new posts.
+
+- id: ho_he_kite_1
+  text: |
+    היי חברים, נפרד מהקייט שלי - Cabrinha Moto 9 מטר שנת 2021, כמעט לא בשימוש. 3,600 ש"ח. גבעתיים
+  expect:
+    is_sale: true
+    location: Givatayim
+    items:
+      - {type: kite, size: 9, brand: Cabrinha, year: 2021, price: 3600}
+
+- id: ho_he_board_1
+  text: |
+    גלשן טווין טיפ של F-One מודל Trax 2020 במידה 136 על 41, מחיר 1500 ש"ח
+  expect:
+    is_sale: true
+    items:
+      - {type: board, subtype: twintip, size: 136, brand: F-One, year: 2020, price: 1500}
+
+- id: ho_he_wanted_1
+  text: |
+    מישהו מוכר טרפז מידה L? מחפשת משהו במצב טוב
+  expect:
+    is_sale: false
+
+- id: ho_he_multi_1
+  text: |
+    עוזב את הספורט, מוכר הכל:
+    1. North Dice 10 מטר 2019 - 2300
+    2. North Dice 7 מטר 2019 - 1900
+    3. בר North 2019 - 900
+    4. גלשן North Select 138 - 1100
+    מחירים בשקלים, מודיעין
+  expect:
+    is_sale: true
+    location: Modiin
+    items:
+      - {type: kite, size: 10, brand: North, year: 2019, price: 2300}
+      - {type: kite, size: 7, brand: North, year: 2019, price: 1900}
+      - {type: bar, brand: North, year: 2019, price: 900}
+      - {type: board, size: 138, brand: North, price: 1100}
+
+- id: ho_he_kite_2
+  text: |
+    אוזון אדג' 11 מטר 2017, מתאים לרוכבים מתקדמים. 1600 שקל
+  expect:
+    is_sale: true
+    items:
+      - {type: kite, size: 11, brand: Ozone, year: 2017, price: 1600}
+
+- id: ho_he_harness_1
+  text: |
+    טרפז ION Apex מידה M, שנה שעברה, 800 ש"ח. בית ינאי
+  expect:
+    is_sale: true
+    location: Beit Yanai
+    items:
+      - {type: harness, size_label: M, brand: ION, price: 800}
+
+- id: ho_en_kite_1
+  text: |
+    Selling Slingshot Machine 12m (2020), good shape, one small patch. 2,200 NIS, Herzliya
+  expect:
+    is_sale: true
+    location: Herzliya
+    items:
+      - {type: kite, size: 12, brand: Slingshot, year: 2020, price: 2200}
+
+- id: ho_en_board_1
+  text: |
+    For sale Airush Switch twin tip 139cm, 2019, 1000 NIS
+  expect:
+    is_sale: true
+    items:
+      - {type: board, subtype: twintip, size: 139, brand: Airush, year: 2019, price: 1000}
+
+- id: ho_en_bundle_1
+  text: |
+    Package deal: Core XR7 12m + Sensor bar + harness size L. 5500 NIS for everything
+  expect:
+    is_sale: true
+    bundle_price: 5500
+    items:
+      - {type: kite, size: 12, brand: Core, price: null}
+      - {type: bar, brand: Core, price: null}
+      - {type: harness, size_label: L, price: null}
+
+- id: ho_he_chat_1
+  text: |
+    מישהו יודע אם יש רוח מחר בשדות ים? התחזית אומרת 18 קשר
+  expect:
+    is_sale: false
+
+- id: ho_he_kite_3
+  text: |
+    למכירה: קייט Naish Triad 9 מטר, שנת 2019, מצב טוב, 2000 ש"ח. קרית ים
+  expect:
+    is_sale: true
+    location: Kiryat Yam
+    items:
+      - {type: kite, size: 9, brand: Naish, year: 2019, price: 2000}
+
+- id: ho_he_foilboard_1
+  text: |
+    גלשן פויל 85 ליטר, Duotone, 2022, מחיר 3200 ש"ח
+  expect:
+    is_sale: true
+    items:
+      - {type: board, subtype: foilboard, size: 85, brand: Duotone, year: 2022, price: 3200}
+
+- id: ho_he_sold_1
+  text: |
+    עדכון: הקייט נמכר, תודה על הפניות
+  expect:
+    is_sale: true
+    items:
+      - {type: kite, sold: true}
+
+- id: ho_en_harness_1
+  text: |
+    Ride Engine harness, size S, used 2 seasons, 600 NIS
+  expect:
+    is_sale: true
+    items:
+      - {type: harness, size_label: S, brand: Ride Engine, price: 600, is_new: false}
+
+- id: ho_he_kite_4
+  text: |
+    קייט 12 מטר של Eleveight משנת 2021 במצב מעולה. 3300 ש"ח או הצעה
+  expect:
+    is_sale: true
+    items:
+      - {type: kite, size: 12, brand: Eleveight, year: 2021, price: 3300}
+
+- id: ho_he_school_1
+  text: |
+    בית הספר שלנו מחפש מדריכי קייט לעונה הקרובה!
+  expect:
+    is_sale: false
+
+- id: ho_shop_kite_1
+  text: |
+    F-ONE BANDIT 2025 | 12m | ₪7,890 | Free delivery
+  expect:
+    is_sale: true
+    items:
+      - {type: kite, size: 12, brand: F-One, year: 2025, price: 7890}
+
+- id: ho_he_two_kites_2
+  text: |
+    זוג קייטים Duotone Rebel - 8 מטר ו-10 מטר, 2018, 1800 כל אחד
+  expect:
+    is_sale: true
+    items:
+      - {type: kite, size: 8, brand: Duotone, year: 2018}
+      - {type: kite, size: 10, brand: Duotone, year: 2018}
+
+- id: ho_en_bar_1
+  text: |
+    Duotone Click Bar 2022, 45-52cm, 2000 NIS, like new
+  expect:
+    is_sale: true
+    items:
+      - {type: bar, brand: Duotone, year: 2022, price: 2000, is_new: false}
+
+- id: ho_he_surf_1
+  text: |
+    סרפבורד Naish Global 5'10 מצוין לגלים, 2200 ש"ח, אשקלון
+  expect:
+    is_sale: true
+    location: Ashkelon
+    items:
+      - {type: board, subtype: surfboard, size: 178, brand: Naish, price: 2200}
