@@ -168,6 +168,17 @@ MIGRATIONS: list[str] = [
         value TEXT NOT NULL
     );
     """,
+    """
+    ALTER TABLE owned_equipment ADD COLUMN subtype TEXT NOT NULL DEFAULT '';
+    ALTER TABLE recommendation_items ADD COLUMN subtype TEXT NOT NULL DEFAULT '';
+    ALTER TABLE recommendation_items ADD COLUMN unit TEXT NOT NULL DEFAULT '';
+    """,
+    # v4: bars moved from metres to cm, foil wings from m² to cm² (values that are clearly in
+    # the old unit are converted; a real bar is never < 5 cm, a front wing never < 1 cm²).
+    """
+    UPDATE owned_equipment SET size = size * 100 WHERE type = 'bar' AND size < 5;
+    UPDATE owned_equipment SET size = size * 10000 WHERE type = 'foil' AND size < 1;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
@@ -255,15 +266,25 @@ class Database:
         item.validate()
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO owned_equipment (type, brand, model, size, year, notes, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (item.type, item.brand, item.model, item.size, item.year, item.notes, now_iso()),
+                "INSERT INTO owned_equipment "
+                "(type, subtype, brand, model, size, year, notes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.type,
+                    item.subtype,
+                    item.brand,
+                    item.model,
+                    item.size,
+                    item.year,
+                    item.notes,
+                    now_iso(),
+                ),
             )
         item.id = cur.lastrowid
         return item.id
 
     def list_owned(self, type: str | None = None) -> list[OwnedItem]:
-        sql = "SELECT id, type, brand, model, size, year, notes FROM owned_equipment"
+        sql = "SELECT id, type, subtype, brand, model, size, year, notes FROM owned_equipment"
         args: tuple = ()
         if type:
             sql += " WHERE type = ?"
@@ -346,11 +367,14 @@ class Database:
             rec.created_at = created
             for item in rec.items:
                 c = self.conn.execute(
-                    "INSERT INTO recommendation_items (recommendation_id, type, size, size_min, "
-                    "size_max, wind_min_kn, wind_max_kn, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO recommendation_items (recommendation_id, type, subtype, unit, "
+                    "size, size_min, size_max, wind_min_kn, wind_max_kn, reason) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         rec.id,
                         item.type,
+                        item.subtype,
+                        item.unit,
                         item.size,
                         item.size_min,
                         item.size_max,
@@ -365,8 +389,9 @@ class Database:
 
     def _items_for(self, rec_id: int) -> list[RecItem]:
         rows = self.conn.execute(
-            "SELECT id, recommendation_id, type, size, size_min, size_max, wind_min_kn, "
-            "wind_max_kn, reason FROM recommendation_items WHERE recommendation_id = ? ORDER BY id",
+            "SELECT id, recommendation_id, type, subtype, unit, size, size_min, size_max, "
+            "wind_min_kn, wind_max_kn, reason FROM recommendation_items "
+            "WHERE recommendation_id = ? ORDER BY id",
             (rec_id,),
         ).fetchall()
         return [RecItem(**dict(r)) for r in rows]

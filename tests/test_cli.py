@@ -125,7 +125,7 @@ def test_main_reports_validation_errors(monkeypatch, tmp_path, capsys):
 
 @pytest.mark.parametrize(
     "t, size, expected",
-    [("kite", 9.5, "9.5m²"), ("bar", 0.5, "0.5m"), ("board", 139, "139 cm"), ("harness", 2, "2"),
+    [("kite", 9.5, "9.5m²"), ("bar", 50, "50 cm"), ("foil", 1600, "1600 cm²"), ("board", 139, "139 cm"), ("harness", 2, "2"),
      ("kite", None, "?")],
 )  # fmt: skip
 def test_fmt_size(t, size, expected):
@@ -151,3 +151,78 @@ def test_cli_loads_seed_sites_from_config(monkeypatch, tmp_path, capsys):
     assert "yamitysb.co.il/product-category/surf/%d7%a7" in out
     assert "https://www.iks-surf.co.il/en/kitesurf-equipment" in out
     assert out.count("\n") == 6
+
+
+# --- step 2: recommend ------------------------------------------------------------------------
+
+
+def test_recommend_needs_profile(db):
+    with pytest.raises(ValidationError, match="profile first"):
+        run(db, "recommend")
+
+
+def test_recommend_set_full_output_and_saved(db):
+    run(db, *FULL_PROFILE)
+    run(db, "gear", "add", "--type", "kite", "--brand", "North", "--model", "Orbit", "--size", "12")
+    out = run(db, "recommend")
+    assert out == (
+        "Recommendation #1 (set)\n"
+        "Set for 80 kg, 12–25 kn, twintip, intermediate.\n"
+        "Kite quiver: 12 m² (12.5–19 kn) [owned], 8 m² (18.5–28.5 kn).\n"
+        "Your 12 m² kite is slightly underpowered between 12 and 12.5 kn.\n"
+        "Using your North Orbit 12 m² kite for 12.5–19 kn.\n"
+        "To look for:\n"
+        "• kite 8m² (7–9m²) — covers 18.5–28.5 kn\n"
+        "• board twintip 140 cm (138–141 cm) — twin tip for 80 kg\n"
+        "• bar 52 cm (50–55 cm) — bar for 12 m²; an adjustable-length bar can fly your whole quiver\n"
+        "• harness size M/L — waist 86 cm → size M or L (between sizes: try both on)"
+    )
+    assert db.latest_recommendation().id == 1
+    assert run(db, "history").endswith("[set] kite 8m², board 140 cm, bar 52 cm, harness size M/L")
+
+
+def test_recommend_nothing_to_buy(db):
+    run(db, *FULL_PROFILE)
+    for args in (
+        ["--type", "kite", "--size", "13"],
+        ["--type", "kite", "--size", "9"],
+        ["--type", "board", "--size", "139", "--subtype", "twintip"],
+        ["--type", "bar"],
+        ["--type", "harness"],
+    ):
+        run(db, "gear", "add", *args)
+    out = run(db, "recommend")
+    assert out.endswith("Nothing to buy — your gear covers it.")
+
+
+def test_recommend_single_item(db):
+    run(db, *FULL_PROFILE)
+    out = run(db, "recommend", "--item", "kite", "--wind", "18-24")
+    assert out == (
+        "Recommendation #1 (single)\n"
+        "best single kite for 18–24 kn (usable 16.5–25.5 kn)\n"
+        "To look for:\n"
+        "• kite 9m² (8–10m²) — best single kite for 18–24 kn (usable 16.5–25.5 kn)"
+    )
+    assert db.latest_recommendation() is None  # singles never replace the active set
+
+
+def test_recommend_wind_requires_item(db):
+    run(db, *FULL_PROFILE)
+    with pytest.raises(ValidationError, match="--item"):
+        run(db, "recommend", "--wind", "15-20")
+
+
+def test_gear_subtype(db):
+    out = run(db, "gear", "add", "--type", "board", "--subtype", "foilboard", "--size", "90")
+    assert out.startswith("Added #1 board")
+    assert db.list_owned()[0].subtype == "foilboard"
+    with pytest.raises(ValidationError, match="subtype for kite"):
+        run(db, "gear", "add", "--type", "kite", "--subtype", "twintip")
+
+
+def test_recommend_bad_wind_is_friendly_error(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("KITEFINDER_DATA_DIR", str(tmp_path))
+    cli.main(["profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25"])
+    assert cli.main(["recommend", "--item", "kite", "--wind", "0-0"]) == 2
+    assert "wind range must be" in capsys.readouterr().err

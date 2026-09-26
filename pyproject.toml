@@ -23,6 +23,9 @@ kitefinder = "kitefinder.cli:main"
 [tool.setuptools.packages.find]
 include = ["kitefinder*"]
 
+[tool.setuptools.package-data]
+"kitefinder.sizing" = ["reference/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["live: needs network and real API keys (run with -m live)"]
@@ -37,3 +40,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# expected bot/CLI messages are asserted verbatim and can be long
+"tests/*" = ["E501"]

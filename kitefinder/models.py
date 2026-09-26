@@ -8,6 +8,11 @@ from typing import Any
 EQUIPMENT_TYPES = ("kite", "bar", "board", "harness", "foil", "wetsuit", "other")
 SKILL_LEVELS = ("beginner", "intermediate", "advanced")
 STYLES = ("twintip", "surfboard", "foil")
+# Boards and foils come in kinds that need different sizing (and units).
+SUBTYPES = {
+    "board": ("twintip", "surfboard", "foilboard"),
+    "foil": ("front_wing", "mast", "complete"),
+}
 CONDITION_PREFS = ("new", "used", "both")
 MARK_STATUSES = ("favorite", "dismissed")
 MARK_KINDS = ("listing", "rec_item")
@@ -68,13 +73,20 @@ class OwnedItem:
     type: str
     brand: str = ""
     model: str = ""
-    size: float | None = None  # m² for kites/foil wings, cm length for boards, m for bars
+    # kite m², twintip/surfboard length cm, foilboard volume L, front wing cm², bar width cm
+    size: float | None = None
     year: int | None = None
     notes: str = ""
+    subtype: str = ""
     id: int | None = None
 
     def validate(self) -> OwnedItem:
         _require(self.type in EQUIPMENT_TYPES, f"type must be one of {', '.join(EQUIPMENT_TYPES)}")
+        allowed = SUBTYPES.get(self.type, ())
+        _require(
+            not self.subtype or self.subtype in allowed,
+            f"subtype for {self.type} must be one of {', '.join(allowed) or '(none)'}",
+        )
         _require(self.size is None or self.size > 0, "size must be positive")
         _require(self.year is None or 1995 <= self.year <= 2100, "year looks wrong")
         return self
@@ -89,6 +101,8 @@ class RecItem:
     wind_min_kn: float | None = None
     wind_max_kn: float | None = None
     reason: str = ""
+    subtype: str = ""
+    unit: str = ""
     id: int | None = None
     recommendation_id: int | None = None
 

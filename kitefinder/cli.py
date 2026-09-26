@@ -13,10 +13,14 @@ from .models import (
     EQUIPMENT_TYPES,
     SKILL_LEVELS,
     STYLES,
+    SUBTYPES,
     OwnedItem,
     Profile,
+    RecItem,
+    Recommendation,
     ValidationError,
 )
+from .sizing import quiver
 
 
 def parse_wind_range(text: str) -> tuple[float, float]:
@@ -32,12 +36,15 @@ def parse_wind_range(text: str) -> tuple[float, float]:
     return lo, hi
 
 
-def fmt_size(item_type: str, size: float | None) -> str:
+DEFAULT_UNITS = {"kite": "m²", "foil": "cm²", "board": "cm", "bar": "cm"}
+
+
+def fmt_size(item_type: str, size: float | None, unit: str | None = None) -> str:
     if size is None:
         return "?"
-    unit = {"kite": "m²", "foil": "m²", "board": "cm", "bar": "m", "harness": ""}.get(item_type, "")
+    unit = DEFAULT_UNITS.get(item_type, "") if unit is None else unit
     s = f"{size:g}"
-    return f"{s}{unit}" if unit in ("m²", "m") else f"{s} {unit}".strip()
+    return f"{s}{unit}" if unit == "m²" else f"{s} {unit}".strip()
 
 
 def format_profile(p: Profile) -> str:
@@ -54,6 +61,30 @@ def format_profile(p: Profile) -> str:
         f"Home: {p.home_location or '—'}",
     ]
     return "\n".join(lines)
+
+
+def format_rec_item(item: RecItem) -> str:
+    kind = f"{item.type} {item.subtype}" if item.subtype and item.type != "harness" else item.type
+    if item.type == "harness":
+        size = f"size {item.subtype}"
+    else:
+        unit = item.unit or ""
+        sep = "" if unit in ("m²", "") else " "
+        size = f"{item.size:g}{sep}{unit}"
+        if item.size_min is not None and item.size_max is not None:
+            size += f" ({item.size_min:g}–{item.size_max:g}{sep}{unit})"
+    return f"• {kind} {size} — {item.reason}"
+
+
+def format_recommendation(rec: Recommendation) -> str:
+    head = f"Recommendation #{rec.id} ({rec.kind})" if rec.id else f"Recommendation ({rec.kind})"
+    body = [head, rec.explanation]
+    if rec.items:
+        body.append("To look for:")
+        body.extend(format_rec_item(i) for i in rec.items)
+    else:
+        body.append("Nothing to buy — your gear covers it.")
+    return "\n".join(body)
 
 
 def format_owned(item: OwnedItem) -> str:
@@ -87,9 +118,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ga = gear.add_parser("add")
     ga.add_argument("--type", required=True, choices=EQUIPMENT_TYPES)
+    ga.add_argument(
+        "--subtype",
+        default="",
+        choices=sorted({"", *(x for v in SUBTYPES.values() for x in v)}),
+        help="board: twintip/surfboard/foilboard; foil: front_wing/mast/complete",
+    )
     ga.add_argument("--brand", default="")
     ga.add_argument("--model", default="")
-    ga.add_argument("--size", type=float)
+    ga.add_argument(
+        "--size",
+        type=float,
+        help="kite m², twintip/surfboard length cm, foilboard litres, front wing cm², bar cm",
+    )
     ga.add_argument("--year", type=int)
     ga.add_argument("--notes", default="")
     gear.add_parser("list")
@@ -105,6 +146,10 @@ def build_parser() -> argparse.ArgumentParser:
     sites.add_parser("list")
     sr = sites.add_parser("rm")
     sr.add_argument("id", type=int)
+
+    rc = sub.add_parser("recommend", help="recommend a set (or one item) for your profile")
+    rc.add_argument("--item", choices=("kite", "board", "bar", "harness", "foil"))
+    rc.add_argument("--wind", help="override wind range for a single item, e.g. 18-24")
 
     hist = sub.add_parser("history", help="past recommendations")
     hist.add_argument("--limit", type=int, default=10)
@@ -180,7 +225,7 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
             )
         if a.cmd == "gear":
             if a.action == "add":
-                item = OwnedItem(a.type, a.brand, a.model, a.size, a.year, a.notes)
+                item = OwnedItem(a.type, a.brand, a.model, a.size, a.year, a.notes, a.subtype)
                 db.add_owned(item)
                 return "Added " + format_owned(item)
             if a.action == "list":
@@ -197,13 +242,31 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
                     "\n".join(f"#{s['id']} {s['url']}" for s in rows) if rows else "No sites yet."
                 )
             return f"Removed site #{a.id}" if db.remove_site(a.id) else f"No site with id {a.id}"
+        if a.cmd == "recommend":
+            prof = db.get_profile()
+            if prof is None:
+                raise ValidationError("set up your profile first: kitefinder profile set ...")
+            if a.wind and not a.item:
+                raise ValidationError("--wind only applies with --item")
+            if a.item:
+                wind = parse_wind_range(a.wind) if a.wind else None
+                rec = quiver.recommend_single(prof, a.item, wind)
+            else:
+                rec = quiver.recommend_set(prof, db.list_owned())
+            db.save_recommendation(rec)
+            return format_recommendation(rec)
         if a.cmd == "history":
             recs = db.list_recommendations(a.limit)
             if not recs:
                 return "No recommendations yet."
             out = []
             for r in recs:
-                parts = ", ".join(f"{i.type} {fmt_size(i.type, i.size)}" for i in r.items)
+                parts = ", ".join(
+                    f"{i.type} size {i.subtype}"
+                    if i.type == "harness"
+                    else f"{i.type} {fmt_size(i.type, i.size, i.unit or None)}"
+                    for i in r.items
+                )
                 out.append(f"#{r.id} {r.created_at} [{r.kind}] {parts}")
             return "\n".join(out)
         if a.cmd in ("fav", "dismiss"):

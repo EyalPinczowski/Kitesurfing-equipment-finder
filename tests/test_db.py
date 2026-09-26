@@ -364,3 +364,52 @@ def test_seed_site_already_added_by_user_is_not_duplicated(db):
     db.add_site("kitelab.co.il")
     assert db.seed_sites(["https://kitelab.co.il/"]) == []
     assert len(db.list_sites()) == 1
+
+
+def test_upgrade_from_v2_keeps_data(tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    path = tmp_path / "old.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:2])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 2)
+    with Database(path) as old:
+        with old.conn:
+            old.conn.execute(
+                "INSERT INTO owned_equipment (type, size, created_at) VALUES ('board', 138, 't')"
+            )
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    with Database(path) as new:
+        (item,) = new.list_owned()
+        assert (item.type, item.size, item.subtype) == ("board", 138, "")
+
+
+def test_rec_item_subtype_and_unit_roundtrip(db, profile):
+    rec = Recommendation(
+        profile=profile, items=[RecItem("board", 100, subtype="foilboard", unit="L")]
+    )
+    db.save_recommendation(rec)
+    (item,) = db.get_recommendation(rec.id).items
+    assert (item.subtype, item.unit) == ("foilboard", "L")
+
+
+def test_v4_converts_old_bar_and_foil_units(tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    path = tmp_path / "v3.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:3])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 3)
+    with Database(path) as old:
+        with old.conn:
+            for t, size in (("bar", 0.5), ("bar", 52), ("foil", 0.15), ("foil", 1500), ("kite", 3)):
+                old.conn.execute(
+                    "INSERT INTO owned_equipment (type, size, created_at) VALUES (?, ?, 't')",
+                    (t, size),
+                )
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    with Database(path) as new:
+        got = sorted((i.type, round(i.size, 6)) for i in new.list_owned())
+    assert got == [("bar", 50), ("bar", 52), ("foil", 1500), ("foil", 1500), ("kite", 3)]
