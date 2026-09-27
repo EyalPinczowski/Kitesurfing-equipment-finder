@@ -1,0 +1,131 @@
+# Israeli kitesurfing spots and their typical riding wind (knots) by season.
+#   summer = afternoon thermal sea breeze (roughly May–October)
+#   winter = storm fronts / south-westerlies (roughly November–April)
+# Names are matched case-insensitively, ignoring spaces, hyphens, quotes and Hebrew niqqud.
+# A region name expands to all of its spots.
+#
+# verified: false — typical values from general riding knowledge, not measured data. The live
+# suite will compare them with wind statistics once network access is available.
+verified: false
+sources: []
+
+regions:
+  north: [north, צפון, galilee coast, haifa area]
+  center: [center, centre, מרכז, sharon, השרון, gush dan, גוש דן]
+  south: [south, דרום]
+  eilat: [eilat, אילת, red sea, ים סוף]
+  kinneret: [kinneret, כנרת, sea of galilee, ים כנרת, galilee lake]
+
+spots:
+  - name: Achziv / Nahariya
+    region: north
+    aliases: [achziv, akhziv, nahariya, naharia, אכזיב, נהריה]
+    summer: [10, 17]
+    winter: [16, 30]
+    gusty: false
+    water: waves
+  - name: Bat Galim
+    region: north
+    aliases: [bat galim, batgalim, haifa, בת גלים, חיפה]
+    summer: [10, 18]
+    winter: [18, 35]
+    gusty: false
+    water: waves
+  - name: Kiryat Yam
+    region: north
+    aliases: [kiryat yam, kiriat yam, קריית ים, קרית ים]
+    summer: [10, 18]
+    winter: [16, 32]
+    gusty: false
+    water: waves
+  - name: Atlit
+    region: north
+    aliases: [atlit, עתלית]
+    summer: [10, 18]
+    winter: [15, 30]
+    gusty: false
+    water: waves
+  - name: Dor / Habonim
+    region: north
+    aliases: [dor, habonim, dor beach, דור, הבונים, חוף דור, נחשולים]
+    summer: [10, 18]
+    winter: [15, 30]
+    gusty: false
+    water: flat
+  - name: Sdot Yam / Caesarea
+    region: center
+    aliases: [sdot yam, sdotyam, caesarea, kesaria, שדות ים, קיסריה]
+    summer: [10, 18]
+    winter: [15, 32]
+    gusty: false
+    water: waves
+  - name: Michmoret
+    region: center
+    aliases: [michmoret, mikhmoret, מכמורת]
+    summer: [10, 18]
+    winter: [15, 30]
+    gusty: false
+    water: waves
+  - name: Beit Yanai
+    region: center
+    aliases: [beit yanai, beit yannai, bet yanai, בית ינאי]
+    summer: [10, 18]
+    winter: [15, 32]
+    gusty: false
+    water: waves
+  - name: Herzliya
+    region: center
+    aliases: [herzliya, herzlia, הרצליה]
+    summer: [10, 17]
+    winter: [15, 30]
+    gusty: false
+    water: waves
+  - name: Tel Aviv
+    region: center
+    aliases: [tel aviv, telaviv, tlv, תל אביב, ת"א]
+    summer: [10, 16]
+    winter: [15, 30]
+    gusty: true          # wind off the city is broken up by buildings
+    water: waves
+  - name: Bat Yam
+    region: center
+    aliases: [bat yam, batyam, בת ים]
+    summer: [10, 17]
+    winter: [15, 30]
+    gusty: false
+    water: waves
+  - name: Ashdod
+    region: south
+    aliases: [ashdod, אשדוד]
+    summer: [10, 18]
+    winter: [15, 32]
+    gusty: false
+    water: waves
+  - name: Ashkelon
+    region: south
+    aliases: [ashkelon, ashqelon, אשקלון]
+    summer: [10, 18]
+    winter: [15, 30]
+    gusty: false
+    water: waves
+  - name: Zikim
+    region: south
+    aliases: [zikim, זיקים]
+    summer: [10, 18]
+    winter: [15, 30]
+    gusty: false
+    water: waves
+  - name: Eilat North Beach
+    region: eilat
+    aliases: [eilat north beach, north beach eilat, חוף צפוני אילת]
+    summer: [15, 25]
+    winter: [12, 22]
+    gusty: false
+    water: flat
+  - name: Kinneret
+    region: kinneret
+    aliases: [kinneret beach, tiberias, טבריה]
+    summer: [15, 28]     # strong afternoon westerly down the Galilee hills
+    winter: [10, 25]
+    gusty: true
+    water: flat

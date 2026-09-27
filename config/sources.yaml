@@ -4,11 +4,19 @@ location:
   home_city: ""          # e.g. Tel Aviv — used for distance ranking
   radius_km: 150
 
+requests:                 # shops and Yad2: random pause between pages (slow and polite)
+  min_delay_s: 4
+  max_delay_s: 10
+
 facebook:
   enabled: true
-  min_delay_s: 8          # random delay between requests, keeps us slow and polite
-  max_delay_s: 20
-  groups: []              # e.g. - https://m.facebook.com/groups/<group-id>
+  min_delay_s: 15         # random delay between requests, keeps us slow and polite
+  max_delay_s: 40
+  # Group links; share links (facebook.com/share/g/...) are resolved to the real group
+  # address on first fetch, using your cookies.
+  groups:
+    - https://www.facebook.com/share/g/1EbtddJgWS/
+    - https://www.facebook.com/share/g/1DZWzVUjGh/
   marketplace_queries:
     - kitesurf
     - קייטסרפינג
@@ -20,7 +28,15 @@ yad2:
   enabled: true
   queries: [קייט, kitesurf, קייטסרפינג]
 
-sites: []                 # seed URLs of shops / listing pages
+# Seed URLs of shops / listing pages. Loaded into the database once; after that manage them
+# with `kitefinder sites ...` or /sites in the bot (removing a seed there is permanent).
+sites:
+  - https://kitelab.co.il
+  - https://kitesurf.co.il
+  - https://kitesurfing.co.il/gear/
+  - https://www.laguna.co.il/product-category/kites/
+  - https://yamitysb.co.il/product-category/surf/%d7%a7%d7%99%d7%99%d7%98-%d7%a1%d7%a8%d7%a4%d7%99%d7%a0%d7%92/
+  - https://www.iks-surf.co.il/en/kitesurf-equipment/
 
 schedule:
   facebook_every_min: 120

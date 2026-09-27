@@ -1,0 +1,11 @@
+# Typical waist harness sizing by waist circumference (cm). Brands differ by a few cm —
+# always check the brand's own chart; sizes between two rows are reported as both.
+verified: false
+sources: []  # filled in with the pages the live check verified against
+sizes:  # [label, min_cm, max_cm]
+  - [XS, 64, 71]
+  - [S, 71, 79]
+  - [M, 79, 86]
+  - [L, 86, 94]
+  - [XL, 94, 102]
+  - [XXL, 102, 110]

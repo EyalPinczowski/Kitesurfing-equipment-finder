@@ -161,7 +161,7 @@ def test_owned_invalid_rejected(db, item):
 @pytest.mark.parametrize(
     "raw, expected",
     [
-        ("https://Shop.co.il/kites/", "https://shop.co.il/kites"),
+        ("https://Shop.co.il/kites/", "https://shop.co.il/kites/"),  # path kept as given
         ("shop.co.il/kites", "https://shop.co.il/kites"),
         ("http://shop.co.il/used?page=1#top", "http://shop.co.il/used?page=1"),
         ("  https://shop.co.il  ", "https://shop.co.il"),
@@ -343,3 +343,340 @@ def test_query_matches_without_rec_item_are_unique(db):
 def test_backup_to_folder_that_does_not_exist_yet(db, tmp_path):
     out = db.backup(tmp_path / "new-folder")
     assert out.parent == tmp_path / "new-folder" and out.suffix == ".db"
+
+
+def test_seed_sites_added_once_and_removal_is_respected(db):
+    seeds = ["https://kitelab.co.il", "https://www.laguna.co.il/product-category/kites/"]
+    assert db.seed_sites(seeds) == [
+        "https://kitelab.co.il",
+        "https://www.laguna.co.il/product-category/kites/",
+    ]
+    assert db.seed_sites(seeds) == []
+    first = db.list_sites()[0]["id"]
+    db.remove_site(first)
+    assert db.seed_sites(seeds) == []  # removed seed stays removed
+    assert [s["url"] for s in db.list_sites()] == [
+        "https://www.laguna.co.il/product-category/kites/"
+    ]
+
+
+def test_seed_site_already_added_by_user_is_not_duplicated(db):
+    db.add_site("kitelab.co.il")
+    assert db.seed_sites(["https://kitelab.co.il/"]) == []
+    assert len(db.list_sites()) == 1
+
+
+def test_upgrade_from_v2_keeps_data(tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    path = tmp_path / "old.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:2])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 2)
+    with Database(path) as old:
+        with old.conn:
+            old.conn.execute(
+                "INSERT INTO owned_equipment (type, size, created_at) VALUES ('board', 138, 't')"
+            )
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    with Database(path) as new:
+        (item,) = new.list_owned()
+        assert (item.type, item.size, item.subtype) == ("board", 138, "")
+
+
+def test_rec_item_subtype_and_unit_roundtrip(db, profile):
+    rec = Recommendation(
+        profile=profile, items=[RecItem("board", 100, subtype="foilboard", unit="L")]
+    )
+    db.save_recommendation(rec)
+    (item,) = db.get_recommendation(rec.id).items
+    assert (item.subtype, item.unit) == ("foilboard", "L")
+
+
+def test_v4_converts_old_bar_and_foil_units(tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    path = tmp_path / "v3.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:3])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 3)
+    with Database(path) as old:
+        with old.conn:
+            for t, size in (("bar", 0.5), ("bar", 52), ("foil", 0.15), ("foil", 1500), ("kite", 3)):
+                old.conn.execute(
+                    "INSERT INTO owned_equipment (type, size, created_at) VALUES (?, ?, 't')",
+                    (t, size),
+                )
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    with Database(path) as new:
+        got = sorted((i.type, round(i.size, 6)) for i in new.list_owned())
+    assert got == [("bar", 50), ("bar", 52), ("foil", 1500), ("foil", 1500), ("kite", 3)]
+
+
+# --- step 2b: active set + restore --------------------------------------------------------------
+
+
+def test_variant_roundtrip_and_latest_prefers_minimum(db, profile):
+    m = Recommendation(profile=profile, items=[], variant="minimum")
+    c = Recommendation(profile=profile, items=[], variant="comfortable")
+    db.save_recommendation(m)
+    db.save_recommendation(c)
+    assert db.get_recommendation(c.id).variant == "comfortable"
+    assert db.latest_recommendation().id == m.id
+    db.set_active_recommendation(c.id)
+    assert db.latest_recommendation().id == c.id
+    db.set_active_recommendation(None)
+    assert db.latest_recommendation().id == m.id
+
+
+def test_active_set_that_was_deleted_falls_back(db, profile):
+    m = Recommendation(profile=profile, items=[])
+    c = Recommendation(profile=profile, items=[], variant="comfortable")
+    db.save_recommendation(m)
+    db.save_recommendation(c)
+    db.set_active_recommendation(c.id)
+    with db.conn:
+        db.conn.execute("DELETE FROM recommendations WHERE id = ?", (c.id,))
+    assert db.latest_recommendation().id == m.id
+
+
+def test_restore_roundtrip_with_safety_backup(db, profile, tmp_path):
+    db.save_profile(profile)
+    db.add_owned(OwnedItem("kite", size=12))
+    snap = db.backup(tmp_path / "snap.db")
+    profile.weight_kg = 99
+    db.save_profile(profile)
+    db.add_owned(OwnedItem("kite", size=9))
+    safety = db.restore(snap)
+    assert db.get_profile().weight_kg == 80
+    assert [i.size for i in db.list_owned()] == [12]
+    assert safety.parent == db.path.parent / "backups"
+    with Database(safety) as before:
+        assert before.get_profile().weight_kg == 99  # nothing lost: the replaced DB is kept
+
+
+def test_restore_rejects_non_kitefinder_files(db, profile, tmp_path):
+    db.save_profile(profile)
+    junk = tmp_path / "junk.db"
+    junk.write_bytes(b"this is not sqlite at all" * 100)
+    other = tmp_path / "other.db"
+    c = sqlite3.connect(other)
+    c.execute("CREATE TABLE x (y)")
+    c.close()
+    for bad, msg in (
+        (junk, "not a kitefinder backup"),
+        (other, "not a kitefinder backup"),
+        (tmp_path / "missing.db", "no such file"),
+        (db.path, "live database"),
+    ):
+        with pytest.raises(ValidationError, match=msg):
+            db.restore(bad)
+    assert db.get_profile() == profile
+    assert not (db.path.parent / "backups").exists()  # no safety copy for a rejected file
+
+
+def test_restore_rejects_newer_schema(db, tmp_path):
+    newer = tmp_path / "newer.db"
+    with Database(newer) as d:
+        d.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    with pytest.raises(ValidationError, match="newer version"):
+        db.restore(newer)
+
+
+def test_restore_old_backup_is_migrated(db, tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    old_path = tmp_path / "old.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:2])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 2)
+    with Database(old_path) as old:
+        with old.conn:
+            old.conn.execute(
+                "INSERT INTO owned_equipment (type, size, created_at) VALUES ('bar', 0.5, 't')"
+            )
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    db.restore(old_path)
+    assert db.schema_version == len(real)
+    assert db.list_owned()[0].size == 50  # v4 unit conversion ran on the restored data
+
+
+def test_restore_of_non_sqlite_file_closes_it(db, tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    opened = []
+    real_connect = sqlite3.connect
+
+    def tracking_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(dbmod.sqlite3, "connect", tracking_connect)
+    notes = tmp_path / "notes.txt"
+    notes.write_text("not a database " * 200)
+    with pytest.raises(ValidationError):
+        db.restore(notes)
+    (conn,) = opened
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
+
+
+def test_prices_and_budget_roundtrip(db, profile):
+    rec = Recommendation(
+        profile=profile,
+        items=[RecItem("kite", 9, est_price_ils=2800)],
+        variant="one_kite",
+        price_condition="new",
+        budget_ils=9000,
+    )
+    db.save_recommendation(rec)
+    got = db.get_recommendation(rec.id)
+    assert (got.variant, got.price_condition, got.budget_ils) == ("one_kite", "new", 9000)
+    assert got.items[0].est_price_ils == 2800
+
+
+# --- listings ---------------------------------------------------------------------------------
+
+
+def test_add_listing_roundtrip_and_anonymous_posts_do_not_collide(db):
+    from kitefinder.models import Listing
+
+    a = Listing("kite", 2600, "North", "Orbit", 13, year=2022, is_new=False, location="Haifa",
+                description="nice", source="yad2", url="https://yad2.co.il/i/2", seller="Noa")  # fmt: skip
+    db.add_listing(a)
+    for _ in range(3):  # same source, no URL, same second
+        db.add_listing(Listing("harness", 600, "ION", size_label="M", source="facebook"))
+    got = db.candidate_listings()
+    assert len(got) == 4
+    first = got[0]
+    assert (first.brand, first.size, first.is_new, first.source, first.url, first.seller) == (
+        "North",
+        13,
+        False,
+        "yad2",
+        "https://yad2.co.il/i/2",
+        "Noa",
+    )
+    assert got[1].size_label == "M" and got[1].is_new is None
+
+
+def test_candidates_exclude_sold_and_dismissed(db):
+    from kitefinder.models import Listing
+
+    keep = db.add_listing(Listing("kite", 1, size=9, url="u1"))
+    db.add_listing(Listing("kite", 1, size=9, url="u2", sold=True))
+    gone = db.add_listing(Listing("kite", 1, size=9, url="u3"))
+    fav = db.add_listing(Listing("kite", 1, size=9, url="u4"))
+    db.set_mark("listing", gone, "dismissed")
+    db.set_mark("listing", fav, "favorite")
+    assert [x.id for x in db.candidate_listings()] == [keep, fav]
+
+
+def test_multi_item_post_shares_raw_post(db):
+    from kitefinder.models import Listing
+
+    db.add_listing(Listing("kite", 1, size=9, source="facebook"), source_id="post-1", item_index=0)
+    db.add_listing(Listing("kite", 1, size=12, source="facebook"), source_id="post-1", item_index=1)
+    assert db.conn.execute("SELECT COUNT(*) FROM raw_posts").fetchone()[0] == 1
+    assert len(db.candidate_listings()) == 2
+
+
+def test_listing_flags_method_bundle_roundtrip_and_images(db):
+    from kitefinder.models import Listing
+
+    lid = db.add_listing(Listing("kite", None, "North", size=12, url="p1", flags=["sold_as_bundle"],
+                                 extracted_by="gemini", bundle_price_ils=4500))  # fmt: skip
+    (got,) = db.candidate_listings()
+    assert (got.flags, got.extracted_by, got.bundle_price_ils) == (
+        ["sold_as_bundle"],
+        "gemini",
+        4500,
+    )
+    db.add_listing_images(lid, ["https://img/1.jpg", "https://img/2.jpg"])
+    assert db.listing_images(lid) == ["https://img/1.jpg", "https://img/2.jpg"]
+    assert db.get_assessment(lid) is None
+    db.save_assessment(lid, 7.0, ["uv_faded"], "tired cloth")
+    db.save_assessment(lid, 6.5, ["uv_faded", "tear"], "small tear")  # replaces
+    assert db.get_assessment(lid) == {
+        "score": 6.5,
+        "flags": ["uv_faded", "tear"],
+        "verdict": "small tear",
+    }
+
+
+def test_same_post_saved_twice_updates_items(db):
+    """Review regression: re-saving a post crashed on UNIQUE(raw_post_id, item_index)."""
+    from kitefinder.models import Listing
+
+    first = db.add_listing(Listing("kite", 3000, size=12, source="facebook"), source_id="p1")
+    again = db.add_listing(
+        Listing("kite", 2500, size=12, source="facebook"), source_id="p1"
+    )  # price drop
+    assert first == again
+    (listing,) = db.candidate_listings()
+    assert listing.price_ils == 2500
+
+
+# --- raw posts from collectors ------------------------------------------------------------------
+
+
+def test_upsert_raw_post_new_seen_changed(db):
+    from kitefinder.collectors.base import RawPost
+
+    p = RawPost("yad2", "a1", "קייט 12 מטר 3200", url="u", author="x", image_urls=["i1"])
+    rid, state = db.upsert_raw_post(p)
+    assert state == "new" and db.known_source_ids("yad2") == {"a1"}
+    assert db.upsert_raw_post(p) == (rid, "seen")
+    db.set_stage(rid, "extracted", "ok")
+    edited = RawPost("yad2", "a1", "קייט 12 מטר 2900 (ירד מחיר)", url="u", image_urls=["i1"])
+    assert db.upsert_raw_post(edited) == (rid, "changed")
+    (row,) = db.raw_posts_in_stage("fetched")
+    assert (
+        row["text"].endswith("(ירד מחיר)")
+        and row["stage_reason"] == "changed"
+        and row["image_urls"] == ["i1"]
+    )
+    assert db.raw_posts_in_stage("extracted") == []
+    db.upsert_raw_post(RawPost("facebook", "a1", "other source, same id"))
+    assert (
+        db.known_source_ids("yad2") == {"a1"}
+        and len(db.raw_posts_in_stage("fetched", limit=5)) == 2
+    )
+
+
+def test_upgrade_to_v9_keeps_raw_posts(tmp_path, monkeypatch):
+    import kitefinder.db as dbmod
+
+    path = tmp_path / "v8.db"
+    real = list(dbmod.MIGRATIONS)
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real[:8])
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", 8)
+    with Database(path) as old:
+        with old.conn:
+            old.conn.execute("INSERT INTO raw_posts (source, source_id, content_hash, first_seen_at, "
+                             "last_seen_at) VALUES ('yad2', 'x', 'h', 't', 't')")  # fmt: skip
+    monkeypatch.setattr(dbmod, "MIGRATIONS", real)
+    monkeypatch.setattr(dbmod, "SCHEMA_VERSION", len(real))
+    with Database(path) as new:
+        (row,) = new.raw_posts_in_stage("fetched")
+        assert row["hints"] == {}
+
+
+def test_site_url_kept_exactly_but_duplicates_still_caught(db):
+    """Regression: stripping the trailing slash made a WooCommerce category page 404."""
+    from kitefinder.db import url_key
+
+    sid, created = db.add_site("https://www.laguna.co.il/product-category/kites/")
+    assert (
+        created and db.list_sites()[0]["url"] == "https://www.laguna.co.il/product-category/kites/"
+    )
+    for dup in (
+        "https://laguna.co.il/product-category/kites",
+        "http://www.LAGUNA.co.il/product-category/kites/",
+    ):
+        assert db.add_site(dup) == (sid, False)
+    assert url_key("https://yamitysb.co.il/a/%d7%a7/") == "https://yamitysb.co.il/a/%d7%a7"

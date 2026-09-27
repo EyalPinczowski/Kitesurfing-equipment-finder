@@ -1,0 +1,62 @@
+<message edited to:>
+North (צפון) — tap the spots you ride; tap again to remove.
+  [Achziv / Nahariya] [Bat Galim]
+  [Kiryat Yam] [Atlit]
+  [Dor / Habonim]
+  [All of them] [⬅ Other regions]
+---
+<message edited to:>
+North (צפון) — tap the spots you ride; tap again to remove.
+Picked: Bat Galim
+  [Achziv / Nahariya] [✓ Bat Galim]
+  [Kiryat Yam] [Atlit]
+  [Dor / Habonim]
+  [All of them] [⬅ Other regions]
+  [✅ Done — 1 spot]
+---
+<message edited to:>
+North (צפון) — tap the spots you ride; tap again to remove.
+Picked: Bat Galim, Atlit
+  [Achziv / Nahariya] [✓ Bat Galim]
+  [Kiryat Yam] [✓ Atlit]
+  [Dor / Habonim]
+  [All of them] [⬅ Other regions]
+  [✅ Done — 2 spots]
+---
+<message edited to:>
+North (צפון) — tap the spots you ride; tap again to remove.
+Picked: Bat Galim
+  [Achziv / Nahariya] [✓ Bat Galim]
+  [Kiryat Yam] [Atlit]
+  [Dor / Habonim]
+  [All of them] [⬅ Other regions]
+  [✅ Done — 1 spot]
+---
+<message edited to:>
+Where do you ride? Tap a region and pick your spots from its list (as many as you like, from several regions). Or type them — several at once: בת גלים, Sdot Yam — or type a wind range in knots like 12-25.
+Picked: Bat Galim
+  [North] [Center] [South]
+  [Eilat] [Kinneret]
+  [✅ Done — 1 spot]
+---
+<message edited to:>
+Center (מרכז) — tap the spots you ride; tap again to remove.
+Picked: Bat Galim
+  [Sdot Yam / Caesarea] [Michmoret]
+  [Beit Yanai] [Herzliya]
+  [Tel Aviv] [Bat Yam]
+  [All of them] [⬅ Other regions]
+  [✅ Done — 1 spot]
+---
+<message edited to:>
+Center (מרכז) — tap the spots you ride; tap again to remove.
+Picked: Bat Galim, Herzliya
+  [Sdot Yam / Caesarea] [Michmoret]
+  [Beit Yanai] [✓ Herzliya]
+  [Tel Aviv] [Bat Yam]
+  [All of them] [⬅ Other regions]
+  [✅ Done — 2 spots]
+---
+Which season's wind should I plan for?
+  [All year] [Summer] [Winter]
+---

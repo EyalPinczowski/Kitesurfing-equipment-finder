@@ -1,0 +1,16 @@
+/setup — answer a few questions to set up your profile
+/recommend — the three quiver options with prices
+/under — best set under a price, e.g. /under 9000
+/assemble — cheapest set from real listings: /assemble mixed|same|kites_bar
+/search — search listings, e.g. /search kite 12m
+/watch — get alerts for a search, e.g. /watch harness M
+/favorites — your favorite listings
+/history — past recommendations
+/profile — your profile
+/gear — gear you own
+/sites — websites searched: /sites, /sites add <link>, /sites rm <id>
+/run — search all sources now
+/report — what the last run found and whether anything was missed
+/cancel — stop the setup questions
+/help — all commands
+---

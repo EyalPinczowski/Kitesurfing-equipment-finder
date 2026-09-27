@@ -51,3 +51,30 @@ def test_repo_sources_yaml_is_valid():
     assert s.sources["location"]["country"] == "IL"
     assert "קייט" in s.sources["facebook"]["marketplace_queries"]
     assert s.sources["schedule"]["lookback_days"] > 0
+
+
+def test_repo_seed_sites_are_valid_and_unique():
+    from kitefinder.db import normalize_url
+
+    urls = load_settings(PROJECT_ROOT, env={}).sources["sites"]
+    normalized = [normalize_url(u) for u in urls]
+    assert len(normalized) == len(set(normalized)) == 6
+    assert all(u.startswith("https://") for u in normalized)
+
+
+def test_repo_facebook_groups_configured():
+    groups = load_settings(PROJECT_ROOT, env={}).sources["facebook"]["groups"]
+    assert len(groups) == len(set(groups)) == 2
+    assert all(g.startswith("https://www.facebook.com/") for g in groups)
+
+
+def test_reference_charts_are_packaged():
+    """pip install must ship the size charts, or `recommend` breaks on the phone."""
+    import tomllib
+
+    from kitefinder.sizing.engine import REFERENCE_DIR
+
+    cfg = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    patterns = cfg["tool"]["setuptools"]["package-data"]["kitefinder.sizing"]
+    charts = sorted(REFERENCE_DIR.glob("*.yaml"))
+    assert charts and all(any(c.match(p) for p in patterns) for c in charts)

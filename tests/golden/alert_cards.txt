@@ -1,0 +1,36 @@
+🪁 <b>Kite 12m² North Orbit 2021</b>
+💰 ₪3,200 · used · ₪300 below the market ₪3,500
+📍 Herzliya
+📝 מצב מצוין, ללא תיקונים &lt;נקי&gt;
+🔍 Condition: 8/10 — small dings
+🌐 Facebook · דני
+✅ fits your kite 12–14m²
+🔁 Also posted on: Yad2 ₪3,200
+
+=====
+
+['https://img/1.jpg', 'https://img/1.jpg', 'https://img/1.jpg', 'https://img/1.jpg']
+
+=====
+
+[[{'text': '✅ Favorite', 'callback_data': 'fav:5'}, {'text': '❌ Dismiss', 'callback_data': 'dis:5'}], [{'text': '🔗 Open the post', 'url': 'https://fb.com/p/1'}]]
+
+=====
+
+🏄 <b>Board (twintip) 138 cm</b>
+💰 price not stated — ask the seller · condition not stated
+📍 location unknown
+📝 (no description in the post)
+🔍 Condition: not checked from photos yet
+🌐 shop.example.co.il
+✅ fits your board 138–141 cm
+ℹ️ size not stated
+🔔 Your search: twin tip 138
+
+=====
+
+[]
+
+=====
+
+[[{'text': '✅ Favorite', 'callback_data': 'fav:6'}, {'text': '❌ Dismiss', 'callback_data': 'dis:6'}]]

@@ -1,0 +1,21 @@
+# Typical Israeli prices in ₪ used to estimate what a recommended set costs before real listing
+# data exists. "used" means a 2–4 year old item in decent condition.
+#
+# verified: false — rough market estimates. From step 5 on, the median of real listings the
+# agent has collected replaces these numbers whenever enough listings exist.
+verified: false
+sources: []
+kite:            # price grows with size: base + per_m2 × size (new); used = new × used_factor
+  new_base: 3500
+  new_per_m2: 300
+  used_factor: 0.45
+bar: {new: 2800, used: 1300}
+harness: {new: 1600, used: 700}
+board:
+  twintip: {new: 3000, used: 1400}
+  surfboard: {new: 4000, used: 2000}
+  foilboard: {new: 3800, used: 2000}
+foil:
+  front_wing: {new: 2500, used: 1300}
+  mast: {new: 2500, used: 1300}
+  complete: {new: 5500, used: 2800}

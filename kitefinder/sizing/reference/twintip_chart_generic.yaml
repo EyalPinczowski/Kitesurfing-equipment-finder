@@ -1,0 +1,10 @@
+# Typical twin-tip length by rider weight (intermediate rider).
+verified: false
+sources: []  # filled in with the pages the live check verified against
+rows:  # [max_weight_kg, min_length_cm, max_length_cm]
+  - [55, 128, 132]
+  - [65, 132, 135]
+  - [75, 135, 138]
+  - [85, 138, 141]
+  - [95, 141, 145]
+  - [999, 145, 152]

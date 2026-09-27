@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from .models import ValidationError
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -38,6 +40,9 @@ class Settings:
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     fb_cookies_path: Path | None = None
+    gemini_model: str | None = None  # None: the client's default
+    gemini_rpm: int | None = None
+    gemini_rpd: int | None = None
     sources: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -65,6 +70,15 @@ def load_settings(root: Path | None = None, env: dict[str, str] | None = None) -
         sources = yaml.safe_load(sources_file.read_text(encoding="utf-8")) or {}
 
     cookies = merged.get("FB_COOKIES_PATH", "")
+
+    def whole_number(name: str) -> int | None:
+        raw = (merged.get(name) or "").strip()
+        if not raw:
+            return None
+        if not raw.isdigit() or int(raw) < 1:
+            raise ValidationError(f"{name} in .env must be a whole number above 0, not {raw!r}")
+        return int(raw)
+
     return Settings(
         root=root,
         data_dir=resolve(merged.get("KITEFINDER_DATA_DIR") or "data"),
@@ -72,5 +86,8 @@ def load_settings(root: Path | None = None, env: dict[str, str] | None = None) -
         telegram_bot_token=merged.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=merged.get("TELEGRAM_CHAT_ID", ""),
         fb_cookies_path=resolve(cookies) if cookies else None,
+        gemini_model=(merged.get("GEMINI_MODEL") or "").strip() or None,
+        gemini_rpm=whole_number("GEMINI_RPM"),
+        gemini_rpd=whole_number("GEMINI_RPD"),
         sources=sources,
     )

@@ -1,0 +1,101 @@
+Let's set you up. What's your weight in kg?
+---
+Your hip / waist size in cm? (for the harness)
+---
+Your level?
+  [Beginner] [Intermediate] [Advanced]
+---
+What do you ride?
+  [Twin tip] [Surfboard] [Foil]
+---
+What kind of twin tip riding? (so I suggest the right kite models)
+  [Freeride] [Big air]
+  [Freestyle] [A bit of everything]
+---
+Where do you ride? Tap a region and pick your spots from its list (as many as you like, from several regions). Or type them — several at once: בת גלים, Sdot Yam — or type a wind range in knots like 12-25.
+  [North] [Center] [South]
+  [Eilat] [Kinneret]
+---
+Do you own any gear? Add items one by one — I won't recommend what you have.
+  [➕ Add an item] [Done]
+---
+Your budget in ₪ for what you still need? — or Skip
+  [Skip]
+---
+New or used gear?
+  [New] [Used] [Both]
+---
+Oldest model year you'd accept? e.g. 2018 — or Skip
+  [Skip]
+---
+How far would you drive to pick up, in km? — or Skip
+  [Skip]
+---
+Websites to search: send links one per message (shops, used-gear pages). Tap Done when finished.
+  [Done]
+---
+Added. 1 site(s) so far.
+---
+✅ Saved. Your profile:
+Weight: 80 kg
+Hip/waist: 86 cm
+Wind range: 12–25 kn
+Skill: intermediate
+Style: twintip (freeride)
+Spots: —
+Gusty spots: no
+Budget: —
+New/used: both
+Travel: —
+Minimum year: —
+Home: —
+Your gear: none
+Websites: 1 added, 1 in total.
+---
+Here are your options:
+  [See the recommendation]
+---
+Recommendation #1 (set, minimum)
+Set for 80 kg, 12–25 kn, twintip, intermediate.
+Option: minimum — fewest kites.
+Kite quiver: 13 m² (11.5–17.5 kn), 9 m² (16.5–25.5 kn).
+Kite models made for twin tip, freeride riding: Duotone Evo, North Reach, Cabrinha Switchblade, Core XR, F-One Bandit, Ozone Enduro (and similar).
+To look for:
+• kite 13m² (12–14m²) — covers 11.5–17.5 kn · ~₪3,300
+• kite 9m² (8–10m²) — covers 16.5–25.5 kn · ~₪2,800
+• board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400
+• bar 52 cm (50–55 cm) — bar for 13 m²; an adjustable-length bar can fly your whole quiver · ~₪1,300
+• harness size M/L — waist 86 cm → size M or L (between sizes: try both on) · ~₪700
+Estimated cost: ~₪9,500 used · ~₪21,000 new (typical Israeli prices, not live listings)
+
+Recommendation #2 (set, comfortable)
+Set for 80 kg, 12–25 kn, twintip, intermediate.
+Option: comfortable — more overlap between kites.
+Kite quiver (sweet spots): 13 m² (12–16 kn), 10 m² (16–21 kn), 8 m² (20–26.5 kn).
+Kite models made for twin tip, freeride riding: Duotone Evo, North Reach, Cabrinha Switchblade, Core XR, F-One Bandit, Ozone Enduro (and similar).
+To look for:
+• kite 13m² (12–14m²) — sweet spot 12–16 kn · ~₪3,300
+• kite 10m² (9–11m²) — sweet spot 16–21 kn · ~₪2,900
+• kite 8m² (7–9m²) — sweet spot 20–26.5 kn · ~₪2,700
+• board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400
+• bar 48 cm (45–50 cm) — bar for 10 m²; an adjustable-length bar can fly your whole quiver · ~₪1,300
+• harness size M/L — waist 86 cm → size M or L (between sizes: try both on) · ~₪700
+Estimated cost: ~₪12,300 used · ~₪27,200 new (typical Israeli prices, not live listings)
+
+Recommendation #3 (set, one_kite)
+Set for 80 kg, 12–25 kn, twintip, intermediate.
+Option: one kite — simplest and cheapest.
+Kite quiver: 12 m² (12.5–19 kn).
+One kite: underpowered below 12.5 kn.
+One kite: overpowered above 19 kn.
+Kite models made for twin tip, freeride riding: Duotone Evo, North Reach, Cabrinha Switchblade, Core XR, F-One Bandit, Ozone Enduro (and similar).
+To look for:
+• kite 12m² (11–13m²) — covers 12.5–19 kn · ~₪3,200
+• board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400
+• bar 52 cm (50–55 cm) — bar for 12 m² · ~₪1,300
+• harness size M/L — waist 86 cm → size M or L (between sizes: try both on) · ~₪700
+Estimated cost: ~₪6,600 used · ~₪14,500 new (typical Israeli prices, not live listings)
+
+Searches will use set #1 (minimum).
+Switch with: kitefinder use <id>
+---
