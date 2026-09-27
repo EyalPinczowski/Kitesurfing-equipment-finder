@@ -1,0 +1,16 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Termux runs this when you share a link to it (Share → Termux) — e.g. a Facebook post, a Yad2
+# ad or a shop product page. The listing is read, matched and alerted like any other.
+url="${1:-}"
+if [[ -z "$url" ]]; then
+  echo "No link was shared." >&2
+  exit 1
+fi
+result="$(kitefinder add-url "$url" 2>&1)"
+echo "$result"
+# a phone notification, if the Termux:API app is installed (without the app the command
+# never answers — so it gets 10 seconds at most)
+if command -v termux-notification >/dev/null 2>&1; then
+  timeout 10 termux-notification --title "kitefinder" \
+    --content "$(printf '%s' "$result" | head -c 300)" || true
+fi

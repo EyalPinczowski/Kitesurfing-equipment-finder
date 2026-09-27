@@ -478,3 +478,52 @@ Each build step ends with a self-review and a report on what was found.
 | 2 | A daily digest option (one message with the day's best matches) instead of one alert per listing. | Medium | Later |
 | 3 | Host the Mini App page on GitHub Pages so it opens instantly; only the data would come from the phone. | Low | Later |
 | 4 | Let the questionnaire edit a single answer (e.g. only the budget) instead of starting over. | Low | Later (the Mini App profile form already does this) |
+
+
+## Step 7 — the always-on agent, Termux install, README, end-to-end
+
+**What was built**
+- `kitefinder/daemon.py` (`kitefinder daemon`, `--once`, `--no-miniapp`, `--port`):
+  - Each source runs on its own interval from `config/sources.yaml` (sites 3 h, Yad2 1 h, Facebook 2 h), and a fully failed source is retried after 15 minutes.
+  - It polls the bot, sends pending alerts, and tells you about source problems once, then again when they're fixed.
+  - It makes a daily backup, keeping 7.
+  - It runs the Mini App server and tunnel. If cloudflared dies, it restarts it and updates the bot's menu button; if the tunnel couldn't start, it tries again every 30 minutes.
+  - No single failure stops it: each step in a round is guarded, Telegram outages back off from 5 s up to 5 minutes, and it stops at once on `sv stop` without leaving cloudflared behind.
+- `install_termux.sh`:
+  - Installs from Termux packages: Python, Pillow, cloudflared, termux-services and termux-api. Nothing needs compiling.
+  - Installs the Python packages, creates `.env` from the example (permissions 600) and a private `secrets/` folder, installs share-to-Termux, and sets up the background service with a log and Termux:Boot autostart.
+- `bin/termux-url-opener`: share any post or product link to Termux and it's read, matched and alerted.
+- `README.md`: install, keys and cookies (step by step), start, daily use (every command), backups, troubleshooting, developer notes.
+
+**Tests**: 1,994 offline tests passed, 97% coverage.
+- **Family 4 (`tests/test_e2e.py`) goes through everything on a fresh install:**
+  1. `/start` claims the bot, then the full questionnaire, then the recommendation button.
+  2. The first scheduled round covers every source. The audit is "all accounted for" for every run, **every match is sent**, and every card has its 💰📍📝🔍🌐 lines and buttons.
+  3. A Favorite and a Dismiss are applied.
+  4. The next day, a Yad2 price drop, and every source runs again. **No repeated alerts**, the dismissed item stays hidden, and the updated price is stored.
+  5. Backups exist, and `/favorites`, `/history` and `/report` give the right text.
+
+  The golden files hold the setup and first-alert transcripts.
+- **Daemon**: the schedule per source, retries, problem and fixed messages (including cookies that expire twice), disabled sources, backup rotation, `/run`, Telegram backoff, crash isolation, running without a bot, the wiring (commands, menu button, tunnel), tunnel restart and retry, a busy port, clean shutdown.
+- **Termux scripts**, run with bash: share-to-Termux, a missing link, a notification that never answers, the installer refusing to run outside Termux, no pip upgrade, file permissions.
+
+**Issues found during the self-check and fixed**
+1. A lost network at startup crashed the service while registering the bot's commands.
+2. A dead tunnel left the Mini App link broken for good.
+3. A menu-button failure orphaned cloudflared.
+4. Found by the code review: one broken shop re-scraped every shop every 15 minutes.
+5. Found by the code review: an expired-cookies message was never cleared, so the next expiry went unreported.
+6. Found by the code review: a busy Mini App port crashed the daemon.
+7. Found by the code review: cloudflared was orphaned on stop.
+8. Found by the code review: one failing step skipped backups and the tunnel check.
+9. Found by the code review: `pip install --upgrade pip` would stop the installer on Termux.
+10. Found by the code review: the share script could hang without the Termux:API app.
+11. Found by the code review: a slow stop.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Answer the bot while a search runs (searches in a worker thread with its own DB connection). | Medium | After the first real runs show how long they take |
+| 2 | Quiet hours: hold alerts at night and send them in the morning. | Low | Later |
+| 3 | A `kitefinder doctor` command that checks the keys, cookies, each site, cloudflared and battery settings in one go. | Medium | Later |
+| 4 | Re-alert on price drops for favorites (carried over from Step 5). | Medium | Later |

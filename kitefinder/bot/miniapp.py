@@ -12,6 +12,7 @@ import hmac
 import json
 import threading
 import time
+from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -185,8 +186,14 @@ def api(db: Database, method: str, path: str, query: dict, body: dict) -> tuple[
 
 
 def make_server(
-    db_path: Path, bot_token: str, owner_id: str | None, host: str = "127.0.0.1", port: int = 8787
+    db_path: Path,
+    bot_token: str,
+    owner_id: str | None | Callable[[], str | None],
+    host: str = "127.0.0.1",
+    port: int = 8787,
 ) -> ThreadingHTTPServer:
+    """`owner_id` may be a function, read on every request (the owner can claim the bot later)."""
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # quiet: Termux logs stay readable
             pass
@@ -212,7 +219,8 @@ def make_server(
             if not parts.path.startswith("/api/"):
                 return self._send(404, {"error": "not found"})
             try:
-                verify_init_data(self.headers.get("X-Telegram-Init-Data", ""), bot_token, owner_id)
+                owner = owner_id() if callable(owner_id) else owner_id
+                verify_init_data(self.headers.get("X-Telegram-Init-Data", ""), bot_token, owner)
             except AuthError as e:
                 return self._send(HTTPStatus.UNAUTHORIZED, {"error": str(e)})
             body = {}

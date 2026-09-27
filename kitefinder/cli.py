@@ -270,6 +270,10 @@ def build_parser() -> argparse.ArgumentParser:
     llm.add_parser("status", help="model, key and today's usage")
     llm.add_parser("models", help="models your key can use")
 
+    dm = sub.add_parser("daemon", help="run the agent: scheduled searches + the Telegram bot")
+    dm.add_argument("--once", action="store_true", help="one round of due searches, then exit")
+    dm.add_argument("--no-miniapp", action="store_true", help="don't start the Mini App")
+    dm.add_argument("--port", type=int, default=8787, help="Mini App port on the phone")
     rn = sub.add_parser("run", help="collect, read, match: one full search run")
     rn.add_argument("--source", choices=("sites", "yad2", "facebook"), help="only this source")
     rn.add_argument("--save-pages", metavar="DIR", help="also save every fetched page (debugging)")
@@ -883,6 +887,8 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
             return _recommend_sets(db, prof, a.option)
         if a.cmd == "assemble":
             return _assemble_cmd(db, a)
+        if a.cmd == "daemon":  # the bot and tests call run(); the daemon itself starts in main()
+            return "The agent runs from the phone's shell: kitefinder daemon"
         if a.cmd in ("run", "collect"):
             return _run_cmd(db, a, collect_only=a.cmd == "collect")
         if a.cmd == "process":
@@ -966,6 +972,12 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] == ["daemon"]:  # long-running: not a command that returns text
+        from . import daemon
+
+        a = build_parser().parse_args(args)
+        return daemon.main(load_settings(), a.once, not a.no_miniapp, a.port)
     try:
         print(run(argv))
     except ValidationError as e:

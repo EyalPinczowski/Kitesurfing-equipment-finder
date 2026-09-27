@@ -51,3 +51,12 @@ design choice with a reasonable alternative.
 28. **The Mini App runs on the phone** (a small built-in web server). It's reached through a **free Cloudflare quick tunnel** (`cloudflared`, no account), and its address changes on every start. The bot updates its menu button each time. Every request is checked against Telegram's signature and your user id, and a login is valid for 24 hours. *needs check.* This needs `pkg install cloudflared` to work on your phone, and the phone must be online for the app to open. The alternative is a fixed free host (e.g. GitHub Pages) for the page, but the data API would still have to reach the phone.
 29. **Typing a button's label counts as tapping it** ("Intermediate", "twin tip"). A harness in "gear you own" asks only for brand/model, not its size. *judgement.*
 30. **Price-drop re-alerts are not done yet** (suggested in Step 5). *judgement.* An alerted listing is never re-sent, even if its price drops. This is still on the suggestion list.
+
+## The always-on agent and Termux (Step 7)
+
+31. **One process does everything** (searches, bot, Mini App, backups). *judgement.* It's simple and light on the phone, but **the bot doesn't answer while a search runs**. A Facebook run with polite pauses can take a few minutes; your messages aren't lost, they're answered right after. The alternative, running searches in a separate thread, is more complex and needs more care with the database.
+32. **Retries**: a source is retried after 15 minutes only when all of it failed (e.g. no network). One broken shop, or expired cookies, waits for the normal interval. *judgement.*
+33. **Problem messages**: each source problem is sent once, with a "works again" message when it's fixed. Repeats of the same problem stay quiet. *judgement.*
+34. **Daily backups go to `data/backups/daily/`, keeping 7.** *judgement.* They stay inside Termux: `/sdcard` needs `termux-setup-storage` and an extra permission, so a copy there is left to `kitefinder backup /sdcard/Download`.
+35. **The installer adds a termux-services background service plus Termux:Boot autostart, and holds a wake lock.** *needs check.* This is written from Termux's documentation and not yet run on a real phone. The wake lock uses some battery; without it Android pauses searches when the screen is off.
+36. **Stopping the service (`sv stop`/`restart`) stops at once, even mid-run.** *judgement.* Nothing is lost, because database writes are atomic. The interrupted run shows as unfinished in `/report` and is simply redone later.
