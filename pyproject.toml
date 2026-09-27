@@ -11,7 +11,6 @@ dependencies = [
     "requests>=2.28",
     "beautifulsoup4>=4.11",
     "PyYAML>=6.0",
-    "python-telegram-bot>=21.0",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +24,7 @@ include = ["kitefinder*"]
 
 [tool.setuptools.package-data]
 "kitefinder.sizing" = ["reference/*.yaml"]
+"kitefinder.bot" = ["web/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

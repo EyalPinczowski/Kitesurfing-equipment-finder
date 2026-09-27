@@ -79,7 +79,7 @@ def test_gear_add_list_rm(db):
     run(db, "gear", "add", "--type", "board", "--size", "138")
     run(db, "gear", "add", "--type", "harness")
     assert run(db, "gear", "list") == (
-        "#2 board: (no brand) 138 cm\n#3 harness: (no brand) ?\n#1 kite: North Orbit 12m² 2022"
+        "#2 board: (no brand) 138 cm\n#3 harness: (no brand) (size not given)\n#1 kite: North Orbit 12m² 2022"
     )
     assert run(db, "gear", "rm", "2") == "Removed #2"
     assert run(db, "gear", "rm", "2") == "No gear with id 2"

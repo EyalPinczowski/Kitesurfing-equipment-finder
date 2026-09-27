@@ -1,0 +1,31 @@
+:root {
+  --bg: var(--tg-theme-bg-color, #fff);
+  --text: var(--tg-theme-text-color, #111);
+  --hint: var(--tg-theme-hint-color, #777);
+  --card: var(--tg-theme-secondary-bg-color, #f2f3f5);
+  --accent: var(--tg-theme-button-color, #2a7ae2);
+  --accent-text: var(--tg-theme-button-text-color, #fff);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0 12px 24px; background: var(--bg); color: var(--text);
+       font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+.tabs { position: sticky; top: 0; display: flex; gap: 6px; padding: 10px 0; background: var(--bg); }
+.tabs button { flex: 1; }
+button { border: 0; border-radius: 10px; padding: 9px 12px; background: var(--card); color: var(--text);
+         font: inherit; cursor: pointer; }
+button.active, button[type=submit], #assemble, #best { background: var(--accent); color: var(--accent-text); }
+.tab { display: none; }
+.tab.active { display: block; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 8px 0; }
+label { display: flex; flex-direction: column; gap: 4px; color: var(--hint); font-size: 13px; margin: 6px 0; }
+input, select { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--card);
+                background: var(--bg); color: var(--text); }
+.box { white-space: pre-wrap; background: var(--card); border-radius: 12px; padding: 10px; font: inherit; }
+.card { background: var(--card); border-radius: 14px; padding: 10px; margin: 10px 0; }
+.card h4 { margin: 4px 0; }
+.card p { margin: 3px 0; }
+.card .hint { color: var(--hint); font-size: 13px; }
+.photos { display: flex; gap: 6px; overflow-x: auto; }
+.photos img { height: 110px; border-radius: 10px; object-fit: cover; }
+.actions { display: flex; gap: 6px; margin-top: 8px; }
+.status { color: var(--hint); min-height: 1.2em; margin: 0; }

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="he" dir="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kite Finder</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <nav class="tabs">
+    <button data-tab="listings" class="active">Listings</button>
+    <button data-tab="options">Options</button>
+    <button data-tab="profile">Profile</button>
+  </nav>
+  <p id="status" class="status" role="status"></p>
+
+  <section id="listings" class="tab active">
+    <div class="row">
+      <label>Build a set from listings
+        <select id="brands">
+          <option value="mixed">cheapest, any brand</option>
+          <option value="kites_bar">kites + bar same brand</option>
+          <option value="same">everything one brand</option>
+        </select>
+      </label>
+      <button id="assemble">Build</button>
+    </div>
+    <pre id="assembled" class="box" hidden></pre>
+    <div id="cards"></div>
+  </section>
+
+  <section id="options" class="tab">
+    <div class="row">
+      <label>Best set under ₪ <input id="under" type="number" inputmode="numeric" min="0" step="100"></label>
+      <button id="best">Find</button>
+      <button id="all">All options</button>
+    </div>
+    <div id="recs"></div>
+  </section>
+
+  <section id="profile" class="tab">
+    <pre id="profile-text" class="box"></pre>
+    <form id="profile-form">
+      <label>Weight (kg) <input name="weight_kg" type="number" min="30" max="150"></label>
+      <label>Hip / waist (cm) <input name="waist_cm" type="number" min="50" max="150"></label>
+      <label>Areas <input name="areas" placeholder="בת גלים, Sdot Yam — or north"></label>
+      <label>or wind range (kn) <input name="wind" placeholder="12-25"></label>
+      <label>Season
+        <select name="season"><option value="">—</option><option>all</option><option>summer</option><option>winter</option></select>
+      </label>
+      <label>Budget (₪) <input name="budget_ils" type="number" min="0" step="100"></label>
+      <label>New / used
+        <select name="condition_pref"><option value="">—</option><option>new</option><option>used</option><option>both</option></select>
+      </label>
+      <label>Oldest year <input name="min_year" type="number" min="1995" max="2100"></label>
+      <button type="submit">Save</button>
+    </form>
+    <h3>Your gear</h3>
+    <ul id="owned"></ul>
+  </section>
+  <script src="app.js"></script>
+</body>
+</html>

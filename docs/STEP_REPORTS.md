@@ -406,3 +406,75 @@ Each build step ends with a self-review and a report on what was found.
 | 1 | Re-alert on a real price drop (e.g. 10%+) for items you favorited. | Medium | Step 6 |
 | 2 | Distance ranking from your home town, using the city names already extracted. | Medium | Later (needs a city-coordinates table) |
 | 3 | Batch several posts per Gemini call to stretch the free quota. | Medium | Later |
+
+
+## Step 6 — Telegram bot, questionnaire, alerts, Mini App
+
+**What was built**
+- `bot/telegram.py`: a small Bot API client (plain HTTPS). It covers long polling, messages with buttons, photo(s), button answers, the command menu and the Mini App menu button. It waits and retries on flood limits.
+- `bot/questionnaire.py`, the `/setup` questionnaire. It asks in order:
+  1. weight
+  2. hip/waist
+  3. level
+  4. style
+  5. where you ride: region buttons, typed spots (Hebrew or English), or a typed wind range
+  6. season (skipped for a typed wind range)
+  7. owned gear, as a loop (type → size → brand/model/year)
+  8. budget
+  9. new/used
+  10. oldest model year
+  11. travel distance
+  12. **website links**
+
+  Answers are checked one at a time and a bad answer is explained. Progress survives a restart, and `/cancel` stops it. It ends with a summary and a "See the recommendation" button.
+- `bot/formatter.py`: the alert card. Every card has:
+  - 🪁 the title
+  - 💰 the price (or "price not stated — ask the seller"), with new/used and the comparison to the market or typical price
+  - 📍 the location (or "location unknown")
+  - 📝 the description
+  - 🔍 the photo condition check
+  - 🌐 the source and seller
+  - ✅ why it fits
+  - 🔔 the watched search, if that's why it matched
+  - 🔁 "Also posted on …", which folds duplicates into one card
+
+  Buttons: ✅ Favorite, ❌ Dismiss, 🔗 Open. The card is followed by up to 4 photos.
+- `bot/app.py`:
+  - Commands: `/setup /recommend /under /assemble /search /watch /unwatch /favorites /history /profile /gear /sites /run /report /help /cancel`. They reuse the CLI, so both always say the same thing.
+  - Owner-only access, alert sending with every message recorded, and the Favorite/Dismiss buttons, which update the database and the buttons in place.
+- `bot/miniapp.py` + `bot/web/`: the Telegram Mini App, with Listings (cards, favorite/dismiss), Options (the three quivers, best under a price, assembled sets mixed/same brand) and Profile (edit form). It is served from the phone. Every API call is checked with Telegram's `initData` signature and your user id.
+- `bot/tunnel.py`: starts a free Cloudflare quick tunnel and reads its public address.
+
+**Tests**: 1,967 offline tests passed, 97% coverage. Family 2 (full bot messages):
+- Golden files in `tests/golden/` hold the **complete text and buttons** of every message: the whole `/setup` conversation, `/help`, every alert from a full run, the Favorite/Dismiss replies, and alert cards with and without photos and with a missing price or location. I reviewed each golden file by hand, and the review found 6 wording problems that are now fixed.
+- Invariant checks:
+  - every alert has a description, a price line, a location line and a condition line
+  - it has photos exactly when the listing has images
+  - every match is sent once
+  - a second run sends nothing new
+- Access and flow: privacy (other chats are refused), a restart mid-setup, typed labels, bad answers, and long answers split under Telegram's 4,096-character limit.
+- The Mini App, through a real local server: static files, signature checks (valid, tampered, other bot, expired, wrong user, no owner yet, non-ASCII), every API route, bad input, and oversized bodies.
+- The tunnel: address parsing, log draining, a silent cloudflared, and cloudflared missing.
+
+**Issues found during the self-check and fixed**
+1. A single photo was sent as an "album", which Telegram rejects (albums need 2–10), so single-photo alerts lost their photo.
+2. Long polling timed out before Telegram's 50-second hold.
+3. One card that Telegram refused blocked every alert after it. Such a card is now re-sent as plain text, or left pending if it still fails.
+4. Empty replies would be rejected by Telegram.
+5. Mini App crashes on bad input.
+6. Typed button labels weren't accepted.
+7. The golden review found duplicated notes and seller names, word order, stray separators, and "?" for an unknown size.
+8. Found by the code review: a wind range above 50 kn blocked the end of setup.
+9. Found by the code review: cloudflared stalled once its log pipe filled.
+10. Found by the code review: the tunnel timeout never fired.
+11. Found by the code review: a quote in `/sites` crashed polling.
+12. Found by the code review: photos were resent or lost on failures and flood limits.
+13. Found by the code review: a non-ASCII signature crashed a request.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Re-alert on a real price drop (10%+) for favorited listings. | Medium | Later |
+| 2 | A daily digest option (one message with the day's best matches) instead of one alert per listing. | Medium | Later |
+| 3 | Host the Mini App page on GitHub Pages so it opens instantly; only the data would come from the phone. | Low | Later |
+| 4 | Let the questionnaire edit a single answer (e.g. only the budget) instead of starting over. | Low | Later (the Mini App profile form already does this) |

@@ -136,7 +136,8 @@ def format_recommendation(
 def format_owned(item: OwnedItem) -> str:
     name = " ".join(x for x in (item.brand, item.model) if x) or "(no brand)"
     year = f" {item.year}" if item.year else ""
-    return f"#{item.id} {item.type}: {name} {fmt_size(item.type, item.size)}{year}".rstrip()
+    size = fmt_size(item.type, item.size) if item.size is not None else "(size not given)"
+    return f"#{item.id} {item.type}: {name} {size}{year}"
 
 
 def build_parser() -> argparse.ArgumentParser:

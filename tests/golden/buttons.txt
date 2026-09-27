@@ -1,0 +1,8 @@
+<toast: ⭐ Saved to favorites>
+---
+<buttons now: ⭐ In favorites>
+---
+<toast: Hidden>
+---
+<buttons now: 🚫 Dismissed — won't show again>
+---
