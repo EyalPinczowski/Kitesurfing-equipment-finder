@@ -3,7 +3,8 @@
 One process does everything, so the phone only runs one thing:
 - each source (websites, Yad2, Facebook) runs on its own interval from config/sources.yaml;
   a source that failed is retried sooner (RETRY_AFTER_MIN)
-- the bot is polled between runs; new matches are sent as alerts
+- searches run in a background thread (your choice, #31), so the bot keeps answering while
+  a long Facebook run is going; new matches are sent as alerts when it finishes
 - a problem with a source (expired cookies, a changed page format, a site down) is told to
   you once, and again when it works again
 - a daily database backup, keeping the last BACKUPS_KEPT
@@ -15,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import signal
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -60,8 +62,17 @@ class Daemon:
         backup_dir: Path | None = None,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
+        background: bool = False,
+        client_factory: Callable[[Database], object] | None = None,
     ):
+        """`background`: searches run in a worker thread with its own database connection
+        (and its own Gemini client from `client_factory`, which is bound to that connection)."""
         self.db, self.settings, self.fetchers, self.client = db, settings, fetchers, client
+        self.background, self.client_factory = background, client_factory
+        self.worker: threading.Thread | None = None
+        self.worker_result: tuple[str, object] | None = None
+        self.worker_sources: list[str] = []
+        self.report_when_done = False  # /run asked: send the report when the run finishes
         self.bot, self.clock, self.sleep = bot, clock, sleep
         self.backup_dir = Path(backup_dir or Path(settings.data_dir) / "backups" / "daily")
         self.stopping = False
@@ -72,6 +83,7 @@ class Daemon:
         self.tunnel_told = False  # "the Mini App is off" is said once
         if bot is not None:
             bot.runner = self.run_all
+            bot.is_busy = lambda: self.busy
 
     # --- scheduling -----------------------------------------------------------------------
 
@@ -99,14 +111,14 @@ class Daemon:
 
     # --- runs -----------------------------------------------------------------------------
 
-    def run_sources(self, sources: list[str], trigger: str = "schedule") -> list:
-        reports = []
+    def _run(self, db: Database, client, sources: list[str], trigger: str) -> list[tuple]:
+        """The searches themselves, on `db` (the worker's own connection in the background)."""
+        done = []
         for source in sources:
             only = None if source == "all" else source
             families = list(SOURCES) if only is None else [only]
             log.info("run %s", source)
-            report = pipeline.run(self.db, self.settings, self.fetchers, self.client, trigger, only)
-            reports.append(report)
+            report = pipeline.run(db, self.settings, self.fetchers, client, trigger, only)
             for family in families:
                 parts = [s for s in report.sources if family_of(s.name) == family]
                 # retry sooner only when the whole source failed for a reason a retry can fix
@@ -114,13 +126,82 @@ class Daemon:
                 broken = bool(report.errors) or (
                     bool(parts) and all(s.errors and not s.login_required for s in parts)
                 )
-                self.db.meta_set(_last_key(family), f"{self.clock()}:{int(not broken)}")
+                db.meta_set(_last_key(family), f"{self.clock()}:{int(not broken)}")
+            done.append((report, families))
+        return done
+
+    def run_sources(self, sources: list[str], trigger: str = "schedule") -> list:
+        """Run now, in this thread (`--once`, and the daemon without background mode)."""
+        done = self._run(self.db, self.client, sources, trigger)
+        for report, families in done:
             self.report_problems(report, families)
-        return reports
+        return [report for report, _ in done]
+
+    @property
+    def busy(self) -> bool:
+        return self.worker is not None and self.worker.is_alive()
+
+    def start_run(self, sources: list[str], trigger: str = "schedule") -> bool:
+        """Start the searches in the background; False if a run is already going."""
+        if self.busy:
+            return False
+        self.worker_result = None
+        self.worker_sources = list(SOURCES) if "all" in sources else list(sources)
+
+        def work():
+            db = Database(self.db.path)  # SQLite connections stay in their own thread
+            try:
+                client = self.client_factory(db) if self.client_factory else self.client
+                self.worker_result = ("ok", self._run(db, client, sources, trigger))
+            except Exception as e:  # noqa: BLE001 — reported by the main thread
+                self.worker_result = ("error", e)
+            finally:
+                db.close()
+
+        self.worker = threading.Thread(target=work, name="kitefinder-search", daemon=True)
+        self.worker.start()
+        return True
+
+    def finish_run(self) -> bool:
+        """On the main thread: once the background run is over, tell its news. True if one
+        just finished."""
+        if self.worker is None or self.worker.is_alive():
+            return False
+        self.worker = None
+        status, value = self.worker_result or ("error", RuntimeError("the search stopped"))
+        if status == "ok":
+            for report, families in value:
+                self.report_problems(report, families)
+        else:  # counted as a failed run, so it's retried after RETRY_AFTER_MIN, not at once
+            for family in self.worker_sources:
+                self.db.meta_set(_last_key(family), f"{self.clock()}:0")
+            log.error("search failed: %s", value)
+            self._tell(f"⚠ The search failed: {value}\nI'll try again at the next round.")
+        if self.report_when_done and self.bot is not None:
+            self.report_when_done = False
+            self.bot.report_run()
+        return True
 
     def run_all(self):
-        """What /run in Telegram does: every source now."""
-        return self.run_sources(["all"], trigger="bot")
+        """What /run in Telegram does: every source now ("background" when it runs there)."""
+        if not self.background:
+            return self.run_sources(["all"], trigger="bot")
+        if self.start_run(["all"], trigger="bot"):
+            self.report_when_done = True
+        return "background"
+
+    def searches(self) -> None:
+        """The searches step of a round: collect a finished run, start the due ones."""
+        self.finish_run()
+        if self.busy:
+            return
+        due = self.due()
+        if not due:
+            return
+        if self.background:
+            self.start_run(due)
+        else:
+            self.run_sources(due)
 
     def report_problems(self, report, families=SOURCES) -> None:
         """Tell the user about each source problem once, and once more when it's gone."""
@@ -174,7 +255,7 @@ class Daemon:
 
     def tick(self) -> None:
         """One round: due searches, pending alerts, backup, tunnel. Never raises."""
-        steps = [("searches", lambda: self.run_sources(self.due()))]
+        steps = [("searches", self.searches)]
         if self.bot is not None:
             steps.append(("alerts", lambda: self.bot.owner and self.bot.send_alerts()))
         steps.append(("backup", self.backup_if_due))
@@ -210,7 +291,8 @@ class Daemon:
         self.stopping = True
 
     def shutdown(self) -> None:
-        """Stop the tunnel (no orphaned cloudflared) and close the database."""
+        """Stop the tunnel (no orphaned cloudflared) and close the database. A background
+        search is a daemon thread: it stops with the process (its writes are atomic)."""
         if self.tunnel is not None:
             try:
                 self.tunnel.terminate()
@@ -223,8 +305,16 @@ class Daemon:
 # --- wiring it together (used by `kitefinder daemon`) --------------------------------------
 
 
-def build(settings, port: int = 8787, miniapp: bool = True, tunnel_start=None, api=None) -> Daemon:
-    from .bot.app import OWNER_KEY, BotApp
+def build(
+    settings,
+    port: int = 8787,
+    miniapp: bool = True,
+    tunnel_start=None,
+    api=None,
+    background: bool = True,
+) -> Daemon:
+    """`background=False` for `--once`: the round runs to the end before the process exits."""
+    from .bot.app import BotApp
     from .bot.telegram import TelegramAPI
     from .llm.gemini import client_from_settings
 
@@ -236,22 +326,31 @@ def build(settings, port: int = 8787, miniapp: bool = True, tunnel_start=None, a
     if settings.telegram_bot_token:
         api = api or TelegramAPI(settings.telegram_bot_token)
         bot = BotApp(db, api, settings.telegram_chat_id)
+        if not settings.telegram_chat_id:
+            log.warning(
+                "TELEGRAM_CHAT_ID is not set: the bot answers nobody. "
+                "Ask @userinfobot for your id and add it to .env"
+            )
         try:
             bot.register_commands()
         except Exception as e:  # noqa: BLE001 — e.g. no network yet: the menu is cosmetic
             log.warning("could not register the bot's commands: %s", e)
-    daemon = Daemon(db, settings, fetchers, client, bot)
+    daemon = Daemon(
+        db,
+        settings,
+        fetchers,
+        client,
+        bot,
+        background=background,
+        client_factory=lambda d: client_from_settings(settings, db=d),
+    )
     if bot is not None and miniapp:
         from .bot import miniapp as mini
         from .bot import tunnel
 
-        def owner():
-            with Database(settings.db_path) as d:
-                return d.meta_get(OWNER_KEY)
-
         try:
             server = mini.make_server(
-                settings.db_path, settings.telegram_bot_token, owner, port=port
+                settings.db_path, settings.telegram_bot_token, bot.owner, port=port
             )
         except OSError as e:  # e.g. the port is taken by another copy still running
             daemon._tell(f"ℹ️ The Mini App is off: port {port} is busy ({e.strerror}).")
@@ -286,7 +385,7 @@ def _exit_now(signum, frame):
 
 def main(settings, once: bool = False, miniapp: bool = True, port: int = 8787) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    daemon = build(settings, port=port, miniapp=miniapp and not once)
+    daemon = build(settings, port=port, miniapp=miniapp and not once, background=not once)
     try:
         if once:
             daemon.tick()

@@ -71,8 +71,21 @@ def plan_kites(profile: Profile, owned: list[OwnedItem], variant: str = "minimum
     return exact[-1] if exact else minimum
 
 
+LIGHT_WIND_POINT = 0.25  # the one-kite option is sized a quarter of the way up your range
+
+
+def light_wind_single_kite(
+    weight: float, lo_w: float, hi_w: float, style: str, skill: str, gusty: bool = False
+) -> int:
+    """Your choice (#6): the one kite leans to the light end of the range — in Israel the
+    summer sea breeze is often light — and is never smaller than the widest-coverage pick."""
+    target = lo_w + LIGHT_WIND_POINT * (hi_w - lo_w)
+    size = engine.kite_size_for(weight, target, style, skill, gusty)
+    return max(size, best_single_kite(weight, lo_w, hi_w, style, skill, gusty))
+
+
 def _one_kite(profile: Profile, owned: list[OwnedItem]) -> QuiverPlan:
-    """A single kite for the whole range: the size covering most of it (an owned kite if it
+    """A single kite for the whole range, sized for its lighter part (an owned kite if it
     covers almost as much). The parts it can't reach are reported, not hidden."""
     style, skill, weight, gusty = profile.style, profile.skill, profile.weight_kg, profile.gusty
     lo_t, hi_t = profile.wind_min_kn, profile.wind_max_kn
@@ -81,7 +94,7 @@ def _one_kite(profile: Profile, owned: list[OwnedItem]) -> QuiverPlan:
         lo, hi = engine.kite_wind_range(size, weight, style, skill, gusty)
         return min(hi, hi_t) - max(lo, lo_t)
 
-    best = best_single_kite(weight, lo_t, hi_t, style, skill, gusty)
+    best = light_wind_single_kite(weight, lo_t, hi_t, style, skill, gusty)
     owned_kites = [k for k in owned if k.type == "kite" and k.size]
     choice: OwnedItem | None = None
     if owned_kites:

@@ -37,7 +37,7 @@ def test_everything_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setattr("kitefinder.bot.app.ALERT_GAP_S", 0)
     db = Database(tmp_path / "kitefinder.db")  # a fresh install
     world, tg, clock = World(), FakeTelegram(), Clock()
-    bot = BotApp(db, tg.api())  # no TELEGRAM_CHAT_ID: the first /start claims the bot
+    bot = BotApp(db, tg.api(), owner_chat="42")  # TELEGRAM_CHAT_ID from .env
     agent = Daemon(
         db, world.settings(), world.fetchers(), None, bot, tmp_path / "bk", clock, lambda s: None
     )

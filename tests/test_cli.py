@@ -344,7 +344,7 @@ def test_recommend_all_options_without_budget_minimum_active(db):
     # condition "both": used prices per item plus the new total
     assert "Estimated cost: ~₪9,500 used · ~₪21,000 new" in out
     assert "Estimated cost: ~₪12,300 used · ~₪27,200 new" in out
-    assert "Estimated cost: ~₪6,200 used · ~₪13,600 new" in out
+    assert "Estimated cost: ~₪6,600 used · ~₪14,500 new" in out
     assert out.endswith("Searches will use set #1 (minimum).\nSwitch with: kitefinder use <id>")
     assert run(db, "use", "2") == "Searches will use set #2."
     assert db.latest_recommendation().variant == "comfortable"
@@ -357,7 +357,7 @@ def test_recommend_all_options_with_budget_marks_and_activates_best_fit(db):
     out = run(db, "recommend")
     assert out.count("✗ ₪1,500 over your ₪8,000 budget.") == 1  # minimum ₪9,500
     assert "✗ ₪4,300 over your ₪8,000 budget." in out  # comfortable ₪12,300
-    assert out.count("✓ Fits your ₪8,000 budget.") == 1  # one kite ₪6,200
+    assert out.count("✓ Fits your ₪8,000 budget.") == 1  # one kite ₪6,600
     assert "Searches will use set #3 (one_kite)." in out
     assert db.latest_recommendation().variant == "one_kite"
 
@@ -427,7 +427,7 @@ def test_recommend_one_kite_option(db):
     run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
     out = run(db, "recommend", "--option", "one_kite")
     assert out.startswith("Recommendation #1 (set, one_kite)\n")
-    assert "One kite: underpowered below 16.5 kn." in out
+    assert "One kite: underpowered below 12.5 kn.\nOne kite: overpowered above 19 kn." in out
     assert out.endswith("Searches will use set #1 (one_kite).")
 
 
@@ -435,19 +435,20 @@ def test_under_full_output_with_step_up(db):
     run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
     out = run(db, "recommend", "--under", "9000")
     assert out == (
-        "Best set within ₪9,000: one-kite quiver, used — ~₪6,200.\n"
+        "Best set within ₪9,000: one-kite quiver, used — ~₪6,600.\n"
         "\n"
         "Recommendation #1 (set, one_kite)\n"
         "Set for 80 kg, 12–25 kn, twintip, intermediate.\n"
         "Option: one kite — simplest and cheapest.\n"
-        "Kite quiver: 9 m² (16.5–25.5 kn).\n"
-        "One kite: underpowered below 16.5 kn.\n"
+        "Kite quiver: 12 m² (12.5–19 kn).\n"
+        "One kite: underpowered below 12.5 kn.\n"
+        "One kite: overpowered above 19 kn.\n"
         "To look for:\n"
-        "• kite 9m² (8–10m²) — covers 16.5–25.5 kn · ~₪2,800\n"
+        "• kite 12m² (11–13m²) — covers 12.5–19 kn · ~₪3,200\n"
         "• board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400\n"
-        "• bar 48 cm (45–50 cm) — bar for 9 m² · ~₪1,300\n"
+        "• bar 52 cm (50–55 cm) — bar for 12 m² · ~₪1,300\n"
         "• harness size M/L — waist 86 cm → size M or L (between sizes: try both on) · ~₪700\n"
-        "Estimated cost: ~₪6,200 used (typical Israeli prices, not live listings)\n"
+        "Estimated cost: ~₪6,600 used (typical Israeli prices, not live listings)\n"
         "✓ Fits your ₪9,000 budget.\n"
         "For ₪500 more: minimum quiver, used (~₪9,500)."
     )
@@ -479,9 +480,9 @@ def test_under_nothing_fits(db):
     run(db, "recommend")  # set #1..#3; #3 (one kite) is active
     out = run(db, "recommend", "--under", "4000")
     assert out.startswith(
-        "Nothing fits ₪4,000. The cheapest rideable set (one-kite quiver, used) is ~₪6,200, ₪2,200 over."
+        "Nothing fits ₪4,000. The cheapest rideable set (one-kite quiver, used) is ~₪6,600, ₪2,600 over."
     )
-    assert "✗ ₪2,200 over your ₪4,000 budget." in out
+    assert "✗ ₪2,600 over your ₪4,000 budget." in out
     assert db.latest_recommendation().id == 3  # a set that doesn't fit never becomes active
 
 
@@ -617,7 +618,7 @@ def test_assemble_under(db):
     _market(db)
     out = run(db, "assemble", "--under")
     assert out.startswith(
-        "Cheapest set from listings (mixed brands) for recommendation #1 (one_kite): ₪5,300"
+        "Cheapest set from listings (mixed brands) for recommendation #1 (one_kite): ₪5,600"
     )
     assert out.splitlines()[-1] == "✓ Fits your ₪7,000 budget."
     out = run(db, "assemble", "--under", "9000")
@@ -705,10 +706,10 @@ def test_assemble_min_year_and_unpriced_output(db):
     run(db, "recommend", "--option", "one_kite")
     out = run(db, "assemble")
     assert out.startswith(
-        "Cheapest set from listings (mixed brands, 2019 or newer) for recommendation #1 (one_kite): ~₪5,800"
+        "Cheapest set from listings (mixed brands, 2019 or newer) for recommendation #1 (one_kite): ~₪6,000"
     )
     assert (
-        "• kite 10m² → North Orbit 10m² 2021 · price not stated (typical ~₪2,900) condition not stated"
+        "• kite 11m² → North Orbit 10m² 2021 · price not stated (typical ~₪3,100) condition not stated"
         in out
     )
     assert "u-old" not in out

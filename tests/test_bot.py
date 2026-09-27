@@ -118,7 +118,7 @@ def test_bad_answers_are_explained_and_asked_again(app, tg):
 def test_setup_survives_a_restart_and_can_be_cancelled(db, tg):
     first = BotApp(db, tg.api(), owner_chat=str(OWNER))
     send(first, "/setup", "80")
-    second = BotApp(db, tg.api())  # e.g. the phone restarted the bot
+    second = BotApp(db, tg.api(), owner_chat=str(OWNER))  # e.g. the phone restarted the bot
     second.handle_update(msg("86", update_id=10))
     assert second.setup.state()["step"] == "skill"
     second.handle_update(msg("/cancel", update_id=11))
@@ -134,16 +134,26 @@ def test_invalid_site_link_asks_again(app, tg):
 # --- who may use the bot ------------------------------------------------------------------------
 
 
-def test_first_start_claims_the_bot_and_others_are_refused(db, tg):
+def test_without_a_chat_id_nobody_may_use_the_bot(db, tg):
+    """Your choice (#25): no TELEGRAM_CHAT_ID, no access — not even the first /start."""
     app = BotApp(db, tg.api())
-    app.handle_update(msg("hello", chat=7))  # no owner yet and not /start: refused
     app.handle_update(msg("/start", chat=42))
-    app.handle_update(msg("/start", chat=7, update_id=3))
-    app.handle_update(press("fav:1", chat=7, update_id=4))
-    assert app.owner == "42"
-    assert [str(b["chat_id"]) for b in tg.sent()] == ["7", "42", "7"]
-    assert tg.sent()[0]["text"] == tg.sent()[2]["text"] == "This bot is private."
+    app.handle_update(press("fav:1", chat=42, update_id=2))
+    assert app.owner is None
+    assert tg.sent()[0]["text"] == "This bot is private."
     assert tg.sent("answerCallbackQuery")[0]["text"] == "This bot is private."
+    assert db.get_profile() is None and not app.setup.active
+
+
+def test_only_the_configured_chat_is_answered(db, tg):
+    app = BotApp(db, tg.api(), owner_chat="42")
+    app.handle_update(msg("/start", chat=7))
+    app.handle_update(press("fav:1", chat=7, update_id=2))
+    app.handle_update(msg("/help", chat=42, update_id=3))
+    assert [str(b["chat_id"]) for b in tg.sent()] == ["7", "42"]
+    assert tg.sent()[0]["text"] == "This bot is private."
+    assert tg.sent("answerCallbackQuery")[0]["text"] == "This bot is private."
+    assert tg.sent()[1]["text"].startswith("/setup — ")
 
 
 def test_start_with_profile_welcomes_back(app, tg, db):
@@ -530,3 +540,108 @@ def test_alerts_are_spaced_out(world_app, monkeypatch):
     world_app.sleep = gaps.append
     world_app.runner()
     assert world_app.send_alerts(limit=3) == 3 and gaps == [1.0, 1.0]
+
+
+# --- your choice #23: re-alert on a price drop of 10% or more ------------------------------------
+
+
+def _set_price(db, listing_id, price):
+    with db.conn:
+        db.conn.execute("UPDATE listings SET price_ils = ? WHERE id = ?", (price, listing_id))
+
+
+def test_a_price_drop_of_10_percent_alerts_again(world_app, db):
+    world_app.runner()
+    world_app.send_alerts(limit=100)
+    assert world_app.build_alerts() == []
+    target = next(n for n in db.notifications() if n["payload"].get("price"))
+    listing_id = db.get_match(target["match_id"])["listing_id"]
+    price = target["payload"]["price"]
+    _set_price(db, listing_id, int(price * 0.91))  # 9% cheaper: not enough
+    assert world_app.build_alerts() == []
+    _set_price(db, listing_id, int(price * 0.8))  # 20% cheaper
+    (drop,) = world_app.build_alerts()
+    assert drop.listing_id == listing_id
+    assert (
+        drop.text.splitlines()[0] == f"📉 <b>Price dropped</b> ₪{price:,} → ₪{int(price * 0.8):,}"
+    )
+    assert drop.text.splitlines()[1].startswith(("🪁", "🦺", "🏄", "🎚️"))
+    assert world_app.send_alerts() == 1
+    assert world_app.build_alerts() == []  # each drop is sent once
+    _set_price(db, listing_id, int(price * 0.8 * 0.85))  # a further 15% drop
+    assert len(world_app.build_alerts()) == 1
+
+
+def test_dismissed_sold_or_unpriced_listings_are_not_realerted(world_app, db):
+    world_app.runner()
+    world_app.send_alerts(limit=100)
+    priced = [n for n in db.notifications() if n["payload"].get("price")]
+    ids = [db.get_match(n["match_id"])["listing_id"] for n in priced[:3]]
+    for lid in ids:
+        _set_price(db, lid, 100)
+    db.set_mark("listing", ids[0], "dismissed")
+    with db.conn:
+        db.conn.execute("UPDATE listings SET sold = 1 WHERE id = ?", (ids[1],))
+        db.conn.execute("UPDATE listings SET price_ils = NULL WHERE id = ?", (ids[2],))
+    assert world_app.build_alerts() == []
+
+
+def test_alerts_recorded_before_prices_were_stored_are_not_realerted(world_app, db):
+    world_app.runner()
+    world_app.send_alerts(limit=100)
+    with db.conn:
+        db.conn.execute("UPDATE notifications SET payload = json_remove(payload, '$.price')")
+        db.conn.execute("UPDATE listings SET price_ils = 1 WHERE price_ils IS NOT NULL")
+    assert world_app.build_alerts() == []
+
+
+# --- regressions from the Step 8 code review ---------------------------------------------------
+
+
+def test_price_drops_only_for_what_you_still_track(world_app, db):
+    world_app.runner()
+    world_app.send_alerts(limit=100)
+    kite = next(
+        n for n in db.notifications()
+        if n["payload"].get("price") and db.get_match(n["match_id"])["rec_item_id"]
+    )  # fmt: skip
+    lid = db.get_match(kite["match_id"])["listing_id"]
+    _set_price(db, lid, 100)
+    assert [a.listing_id for a in world_app.build_alerts()] == [lid]
+    db.set_listing_status([lid], "unmatched")  # e.g. the post was edited and no longer fits
+    assert world_app.build_alerts() == []
+    db.set_listing_status([lid], "matched")
+    from kitefinder.models import Profile
+    from kitefinder.sizing import quiver
+
+    db.save_recommendation(quiver.recommend_set(Profile(55, 70, 25, 35), [], "minimum"))
+    assert lid not in [a.listing_id for a in world_app.build_alerts()]  # a new, different set
+
+
+def test_a_cross_posted_price_drop_is_one_card(world_app, db):
+    world_app.runner()
+    world_app.send_alerts(limit=100)
+    twins = [
+        x
+        for x in db.candidate_listings()
+        if formatter.duplicate_key(x) == ("kite", "North", 12.0, "", 3200)
+    ]
+    assert len(twins) == 2
+    for x in twins:
+        _set_price(db, x.id, 2500)  # the seller lowered it on both sites
+    drops = world_app.build_alerts()
+    assert len(drops) == 1 and drops[0].text.startswith("📉 <b>Price dropped</b> ₪3,200 → ₪2,500")
+
+
+def test_a_match_replaced_while_its_card_goes_out_is_still_recorded(world_app, db, monkeypatch):
+    world_app.runner()
+    (alert,) = world_app.build_alerts()[:1]
+    with db.conn:
+        db.conn.execute("PRAGMA foreign_keys = ON")
+        db.conn.execute(
+            "DELETE FROM matches WHERE id = ?", (alert.match_ids[0],)
+        )  # the search pruned it
+    monkeypatch.setattr(world_app, "build_alerts", lambda: [alert])
+    assert world_app.send_alerts() == 1
+    (note,) = db.notifications(1)
+    assert note["match_id"] is None and note["payload"]["listing_id"] == alert.listing_id

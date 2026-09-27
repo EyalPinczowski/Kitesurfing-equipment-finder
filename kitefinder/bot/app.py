@@ -1,12 +1,12 @@
 """The Telegram bot: commands, the questionnaire, alert sending and button presses.
 
 Commands reuse the CLI (`kitefinder …`) so the bot and the terminal always say the same
-thing. Only your own chat may use it: TELEGRAM_CHAT_ID, or — if that isn't set — the first
-chat that sends /start claims the bot.
+thing. Only your own chat may use it: TELEGRAM_CHAT_ID (your choice: no chat id, nobody).
 """
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from collections.abc import Callable
 
@@ -17,10 +17,10 @@ from .formatter import Alert, duplicate_key, format_alert, html_to_text
 from .questionnaire import Questionnaire, Reply
 from .telegram import TelegramAPI, TelegramError, button
 
-OWNER_KEY = "tg_owner_chat"
 OFFSET_KEY = "tg_offset"
 ALERTS_PER_RUN = 20  # the rest stay pending for the next round (Telegram flood limits)
 ALERT_GAP_S = 1.0  # Telegram allows about one message a second per chat
+PRICE_DROP = 0.10  # re-alert an alerted listing when its price falls this much (your choice)
 
 COMMANDS = [
     ("setup", "answer a few questions to set up your profile"),
@@ -66,20 +66,18 @@ class BotApp:
         sleep: Callable[[float], None] = time.sleep,
     ):
         self.db, self.api, self.runner, self.sleep = db, api, runner, sleep
+        self.is_busy: Callable[[], bool] = lambda: False  # a search running in the background
         self.setup = Questionnaire(db)
-        if owner_chat:
-            db.meta_set(OWNER_KEY, str(owner_chat))
+        self._owner = str(owner_chat) if owner_chat else None
 
     # --- who may talk to the bot --------------------------------------------------------------
 
     @property
     def owner(self) -> str | None:
-        return self.db.meta_get(OWNER_KEY)
+        return self._owner
 
-    def _allowed(self, chat_id, text: str) -> bool:
-        if self.owner is None and text.startswith("/start"):
-            self.db.meta_set(OWNER_KEY, str(chat_id))  # the first /start claims the bot
-        return self.owner == str(chat_id)
+    def _allowed(self, chat_id) -> bool:
+        return self.owner is not None and self.owner == str(chat_id)
 
     # --- sending ------------------------------------------------------------------------------
 
@@ -111,7 +109,7 @@ class BotApp:
         text = (msg.get("text") or "").strip()
         if chat is None or not text:
             return None
-        if not self._allowed(chat, text):
+        if not self._allowed(chat):
             self.api.send_message(chat, "This bot is private.")
             return None
         if text.startswith("/"):
@@ -177,11 +175,17 @@ class BotApp:
             return self.say(
                 "Searching isn't available here — run `kitefinder daemon` on the phone."
             )
+        if self.is_busy():
+            return self.say("A search is already running — I'll send what it finds.")
         self.say("🔎 Searching all sources — this can take a few minutes…")
-        self.runner()
+        if self.runner() == "background":
+            return None  # still answering you; the report comes when the search is done
+        return self.report_run()
+
+    def report_run(self) -> None:
+        """After a search: its alerts, then the report."""
         sent = self.send_alerts()
         self.say(self._cli(["report"]) + f"\n\n📨 {sent} new alert{'s' if sent != 1 else ''} sent.")
-        return None
 
     def build_alerts(self) -> list[Alert]:
         """One alert per item: likely duplicates on other sources are folded into it."""
@@ -201,6 +205,19 @@ class BotApp:
             alert = format_alert(listing, match, photos, self.db.get_assessment(listing.id), others)
             alert.match_ids = [m["id"] for _, m in members]
             alerts.append(alert)
+        folded: set = set()  # the same item cross-posted and cheaper on both: one card
+        for drop in self.db.price_drops(PRICE_DROP, items, queries):  # alerted, now cheaper
+            listing, match = (
+                self.db.get_listing(drop["listing_id"]),
+                self.db.get_match(drop["match_id"]),
+            )
+            key = duplicate_key(listing)
+            if key is not None and key in folded:
+                continue
+            folded.add(key)
+            photos = [u for u in self.db.listing_images(listing.id) if u.startswith("http")]
+            assessment = self.db.get_assessment(listing.id)
+            alerts.append(format_alert(listing, match, photos, assessment, (), drop["old_price"]))
         return alerts
 
     def send_alerts(self, limit: int = ALERTS_PER_RUN) -> int:
@@ -224,9 +241,17 @@ class BotApp:
                     self.api.send_media_group(self.owner, photos, (card or {}).get("message_id"))
                 except TelegramError:
                     photos = []  # a photo link Telegram can't fetch: the card is enough
-            payload = {"text": alert.text, "photos": photos, "buttons": alert.buttons}
+            payload = {
+                "text": alert.text,
+                "photos": photos,
+                "buttons": alert.buttons,
+                "price": alert.price_ils,  # a later drop of 10%+ from this price alerts again
+            }
             for match_id in alert.match_ids:
-                self.db.record_notification(match_id, payload)
+                try:
+                    self.db.record_notification(match_id, payload)
+                except sqlite3.IntegrityError:  # the search just replaced this match
+                    self.db.record_notification(None, {**payload, "listing_id": alert.listing_id})
             sent += 1
         return sent
 

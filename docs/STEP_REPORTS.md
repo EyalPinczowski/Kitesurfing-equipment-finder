@@ -527,3 +527,31 @@ Each build step ends with a self-review and a report on what was found.
 | 2 | Quiet hours: hold alerts at night and send them in the morning. | Low | Later |
 | 3 | A `kitefinder doctor` command that checks the keys, cookies, each site, cloudflared and battery settings in one go. | Medium | Later |
 | 4 | Re-alert on price drops for favorites (carried over from Step 5). | Medium | Later |
+
+
+## Step 8 — your approval decisions
+
+You answered 13 approval items. Four keep the current behaviour (#13 Marketplace from Tel Aviv, #14 Facebook depth, #26 alert style, #34 backups inside Termux) and #30 is covered by #23. The other eight are changed:
+
+| # | Your answer | What changed |
+|---|---|---|
+| 25 | Require `TELEGRAM_CHAT_ID` | The bot answers only that chat; with no chat id, nobody. The owner always comes from `.env`. |
+| 23 | Re-alert any alerted listing on a 10%+ price drop | The card starts with "📉 Price dropped ₪X → ₪Y". Each drop is sent once. Only for listings that still fit your current set or a watched search; dismissed and sold ones are skipped, and cross-posted duplicates are one card. |
+| 31 | Answer during searches | Searches run in a background thread with their own database connection and Gemini client. `/run` during a run says so, and the report comes when it ends. A crashed search is reported and retried after 15 minutes. `--once` still runs in the foreground. |
+| 20 | Wait for Gemini | When the quota is out, posts wait and `/report` shows them. A post waits at most 48 h (e.g. a key with no quota at all); then the rules read it and Gemini re-reads it later. Without a key, the rules read everything, as before. |
+| 18 | 50% size fit, 25% condition, 25% price | New score weights. Only the order of alerts changes. |
+| 6 | Bigger one kite, for light wind | Sized a quarter of the way up your range and never smaller than before. For 80 kg at 12–25 kn: 12 m², 12.5–19 kn (was 9 m², 16.5–25.5 kn). The one-kite set now costs ~₪6,600 used (was ~₪6,200). |
+| 5 | Newest gear first | Within a budget, a set bought new beats a used one; among real-listing sets, more new items and newer years win, with ties going to the fuller quiver. |
+| 17 | Slower, safer requests | 4–10 s between shop and Yad2 pages, 15–40 s for Facebook. |
+
+**Tests**: 2,010 offline tests passed, 97% coverage. The golden files were regenerated and reviewed: only the one-kite text and the order of alert cards changed, and the cards themselves are identical.
+
+**Issues found and fixed**
+1. A crashed background search restarted at every round, about every 25 s.
+2. My first quota change held every post as "waiting" when there's no Gemini key.
+3. Pre-existing: when no set could be completed, the "fullest set" fallback could pick one with nothing found.
+4. Found by the code review: `--once` exited before its search finished.
+5. Found by the code review: price drops ignored which set and searches you track.
+6. Found by the code review: a match pruned mid-send crashed the batch.
+7. Found by the code review: posts could wait for Gemini forever.
+8. Found by the code review: duplicate price-drop cards.

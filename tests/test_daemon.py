@@ -160,6 +160,7 @@ def test_build_wires_the_bot_the_miniapp_and_the_tunnel(tmp_path, monkeypatch):
 
     d = daemon.build(settings, port=0, tunnel_start=fake_tunnel, api=tg.api())
     assert d.bot.owner == "42" and started["port"] > 0 and d.tunnel == "proc"
+    assert d.background and d.client_factory is not None  # searches run beside the bot
     (menu,) = tg.sent("setChatMenuButton")
     assert (
         "chat_id" not in menu
@@ -355,7 +356,8 @@ def test_main_stops_cleanly(monkeypatch, tmp_path):
     settings.data_dir = tmp_path
     built = {}
 
-    def fake_build(settings, port, miniapp):
+    def fake_build(settings, port, miniapp, background):
+        built["background"] = background
         d = daemon.Daemon(__import__("kitefinder.db", fromlist=["Database"]).Database(tmp_path / "x.db"),
                           settings, world.fetchers(), sleep=lambda s: None)  # fmt: skip
         d.tunnel = Proc()
@@ -369,4 +371,90 @@ def test_main_stops_cleanly(monkeypatch, tmp_path):
     assert built["d"].tunnel is None  # cloudflared stopped
     with pytest.raises(SystemExit):
         daemon._exit_now(15, None)
+    assert built["background"] is True
     assert daemon.main(settings, once=True) == 0
+    assert built["background"] is False  # --once runs its round to the end (review fix)
+
+
+# --- your choice #31: the bot answers while a search runs --------------------------------------
+
+
+@pytest.fixture
+def bg(setup):
+    d, tg, clock, sleeps, world = setup
+    d.background = True
+    return d, tg
+
+
+def cards(tg):
+    return [b for b in tg.sent() if b.get("parse_mode") == "HTML"]
+
+
+def test_a_real_background_run_uses_its_own_connection_and_alerts_after(bg, db):
+    d, tg = bg
+    d.tick()  # starts the search in a thread
+    d.worker.join(30)
+    assert cards(tg) == []  # nothing yet: the main thread hasn't collected the run
+    d.tick()  # collects it, then sends the alerts
+    assert cards(tg) and not d.busy
+    runs = db.conn.execute("SELECT id, finished_at FROM runs").fetchall()
+    assert len(runs) == 3 and all(r["finished_at"] for r in runs)
+    from kitefinder import audit
+
+    assert audit.audit(db, None, alerts_sent=True).ok
+
+
+def test_the_bot_answers_during_a_slow_search(bg, db, monkeypatch):
+    import threading
+
+    d, tg = bg
+    release, started = threading.Event(), threading.Event()
+    real = daemon.pipeline.run
+
+    def slow(db_, *a, **k):
+        started.set()
+        release.wait(10)
+        return real(db_, *a, **k)
+
+    monkeypatch.setattr(daemon.pipeline, "run", slow)
+    d.bot.handle_update(msg("/run", update_id=1))
+    assert started.wait(5) and d.busy
+    d.bot.handle_update(msg("/help", update_id=2))  # answered at once
+    d.bot.handle_update(msg("/run", update_id=3))
+    d.tick()  # a round during the run starts nothing new
+    texts = [b["text"] for b in tg.sent()]
+    assert texts[0] == "🔎 Searching all sources — this can take a few minutes…"
+    assert texts[1].startswith("/setup — ")
+    assert texts[2] == "A search is already running — I'll send what it finds."
+    assert db.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] <= 1
+    release.set()
+    d.worker.join(30)
+    d.tick()
+    texts = [b["text"] for b in tg.sent()]
+    assert cards(tg) and texts[-1].startswith("Run #1: ✓ all accounted for")
+    assert texts[-1].endswith(f"📨 {len(cards(tg))} new alerts sent.")
+
+
+def test_a_crashed_background_search_is_reported(bg, monkeypatch):
+    d, tg = bg
+    monkeypatch.setattr(daemon.pipeline, "run", lambda *a, **k: 1 / 0)
+    d.tick()
+    d.worker.join(10)
+    d.tick()
+    assert "⚠ The search failed: division by zero\nI'll try again at the next round." in [
+        b["text"] for b in tg.sent()
+    ]
+    assert not d.busy  # not restarted straight away
+    assert d.due() == []
+    d.clock.t += 16 * 60
+    assert d.due() == ["sites", "yad2", "facebook"]  # retried after 15 minutes
+
+
+def test_background_runs_get_a_client_bound_to_their_connection(bg, db):
+    d, _ = bg
+    seen = []
+    d.client_factory = lambda conn: seen.append(conn) or None
+    d.start_run(["sites"])
+    d.worker.join(30)
+    (conn,) = seen
+    assert conn is not db and conn.path == db.path

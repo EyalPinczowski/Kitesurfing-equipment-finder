@@ -329,8 +329,8 @@ def test_best_under_picks_best_affordable_quiver():
     assert comfy.total == 3000 + 2500 + 2600 + 1300 + 1000 + 600
     minimum = asm.best_assembly_under(build(), MARKET, 9000)
     assert minimum.rec.variant == "minimum" and minimum.total == 3000 + 2500 + 1300 + 1000 + 600
-    one = asm.best_assembly_under(build(), MARKET, 6000)
-    assert one.rec.variant == "one_kite" and one.total == 2500 + 1300 + 1000 + 600
+    one = asm.best_assembly_under(build(), MARKET, 6000)  # the one kite is 12 m² (11–13): the 13
+    assert one.rec.variant == "one_kite" and one.total == 3000 + 1300 + 1000 + 600
 
 
 def test_best_under_over_budget_returns_cheapest_complete():
@@ -475,3 +475,34 @@ def test_min_year_passed_through_best_under():
                     L("bar", 1000, "North"), L("harness", 600, "ION", size_label="M")])  # fmt: skip
     a = asm.best_assembly_under(build(), old, 9000, min_year=2019)
     assert not a.complete and any(it.type == "kite" for it in a.missing)
+
+
+# --- your choice #5: the newest gear within the budget ------------------------------------------
+
+
+def test_best_under_prefers_new_gear_over_a_fuller_used_quiver():
+    new = [L("kite", 7000, "North", 12, is_new=True, year=2025)]
+    # used kites that fit the two-kite set (13 → 14 m², 9 m²) but not the one-kite 12 m² slot
+    used = [L("kite", 2600, "North", 14, is_new=False, year=2018),
+            L("kite", 2500, "North", 9, is_new=False, year=2018)]  # fmt: skip
+    rest = [L("board", 1300, "Cabrinha", 140, is_new=True, year=2025), L("bar", 1000, "North", is_new=True, year=2025),
+            L("harness", 600, "ION", size_label="M", is_new=True, year=2025)]  # fmt: skip
+    listings = with_ids(new + used + rest)
+    assert asm.assemble(build()("minimum"), listings, "mixed").complete  # the used set fits too
+    a = asm.best_assembly_under(build(), listings, 20000)
+    assert a.rec.variant == "one_kite" and a.complete  # all new beats a used two-kite set
+    assert all(m.listing.is_new for _, m in a.picks)
+
+
+def test_newness_ranks_new_then_year():
+    older = asm.Assembly(
+        None, [(None, asm.Match(L("kite", 1, year=2019, is_new=True), True))], "mixed"
+    )
+    newer = asm.Assembly(
+        None, [(None, asm.Match(L("kite", 1, year=2023, is_new=True), True))], "mixed"
+    )
+    used = asm.Assembly(
+        None, [(None, asm.Match(L("kite", 1, year=2025, is_new=False), True))], "mixed"
+    )
+    assert asm.newness(newer) > asm.newness(older) > asm.newness(used)
+    assert asm.newness(asm.Assembly(None, [(None, None)], "mixed")) == (0.0, 0.0)

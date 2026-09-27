@@ -79,14 +79,15 @@ Estimated cost: ~₪12,300 used · ~₪27,200 new (typical Israeli prices, not l
 Recommendation #3 (set, one_kite)
 Set for 80 kg, 12–25 kn, twintip, intermediate.
 Option: one kite — simplest and cheapest.
-Kite quiver: 9 m² (16.5–25.5 kn).
-One kite: underpowered below 16.5 kn.
+Kite quiver: 12 m² (12.5–19 kn).
+One kite: underpowered below 12.5 kn.
+One kite: overpowered above 19 kn.
 To look for:
-• kite 9m² (8–10m²) — covers 16.5–25.5 kn · ~₪2,800
+• kite 12m² (11–13m²) — covers 12.5–19 kn · ~₪3,200
 • board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400
-• bar 48 cm (45–50 cm) — bar for 9 m² · ~₪1,300
+• bar 52 cm (50–55 cm) — bar for 12 m² · ~₪1,300
 • harness size M/L — waist 86 cm → size M or L (between sizes: try both on) · ~₪700
-Estimated cost: ~₪6,200 used · ~₪13,600 new (typical Israeli prices, not live listings)
+Estimated cost: ~₪6,600 used · ~₪14,500 new (typical Israeli prices, not live listings)
 
 Searches will use set #1 (minimum).
 Switch with: kitefinder use <id>

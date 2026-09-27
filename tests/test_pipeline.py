@@ -342,21 +342,24 @@ def quota_client(db, calls_left):
     )
 
 
-def test_quota_fallback_posts_are_reread_by_gemini_later(ready, world):
+def test_when_the_quota_runs_out_posts_wait_for_gemini(ready, world):
+    """Your choice (#20): no rules guesses on quota days — the posts wait, nothing is lost."""
     client = quota_client(ready, 3)
     run(ready, world, client)
-    tagged = ready.conn.execute(
-        "SELECT COUNT(*) FROM raw_posts WHERE stage_reason = 'rules:quota'").fetchone()[0]  # fmt: skip
-    assert tagged > 0
+    waiting = ready.conn.execute(
+        "SELECT COUNT(*) FROM raw_posts WHERE stage_status = 'fetched'").fetchone()[0]  # fmt: skip
+    assert waiting > 0
+    assert ready.conn.execute(
+        "SELECT COUNT(*) FROM raw_posts WHERE stage_reason LIKE 'rules:%'").fetchone()[0] == 0  # fmt: skip
     a = audit.audit(ready)
-    assert any("read by the offline rules; Gemini re-reads them later" in n for n in a.notes)
+    assert a.ok and a.backlog == waiting and a.unaccounted == 0
+    assert any("wait for the next run" in n for n in a.notes)
+    still_out = pipeline.process(ready, client)  # same day: they keep waiting
+    assert still_out["extracted"] == 0 and len(ready.raw_posts_in_stage("fetched")) == waiting
     client.rpd = 1000  # next day: quota back
     stages = pipeline.process(ready, client)
-    assert stages["upgraded"] == min(tagged, pipeline.UPGRADE_PER_RUN)
-    left = ready.conn.execute(
-        "SELECT COUNT(*) FROM raw_posts WHERE stage_reason = 'rules:quota'"
-    ).fetchone()[0]
-    assert left == tagged - stages["upgraded"]
+    assert stages["extracted"] + stages["not_listing"] + stages["prefilter_rejected"] == waiting
+    assert ready.raw_posts_in_stage("fetched") == []
 
 
 def test_legacy_seed_marker_still_respected(db):
@@ -386,3 +389,28 @@ def test_market_price_computed_once_per_item(monkeypatch):
     rec = Recommendation(profile=None, items=[KITE13])
     matcher.match_recommendation(rec, [used(3000 + i, id=i) for i in range(1, 40)])
     assert len(calls) == 1  # all used: one condition, one item
+
+
+def test_a_post_waits_for_gemini_at_most_two_days(ready, world):
+    """Review fix: a key that never gets quota can't leave posts unread for good."""
+    refuse = FakeTransport(lambda body: (429, {"error": {"message": "limit: 0"}}, {}))
+    client = gm.GeminiClient("K", db=ready, transport=refuse, sleep=lambda s: None, max_retries=0)
+    run(ready, world, client)  # Google answers 429 to every call: this key has no quota
+    waiting = len(ready.raw_posts_in_stage("fetched"))
+    assert waiting > 0
+    with ready.conn:
+        ready.conn.execute("UPDATE raw_posts SET first_seen_at = '2020-01-01T00:00:00+00:00'")
+    stages = pipeline.process(ready, client)
+    assert ready.raw_posts_in_stage("fetched") == []  # read by the rules after waiting
+    assert stages["extracted"] > 0
+    tagged = ready.conn.execute(
+        "SELECT COUNT(*) FROM raw_posts WHERE stage_reason = 'rules:quota'").fetchone()[0]  # fmt: skip
+    assert tagged == stages["extracted"]  # Gemini re-reads them when the quota is back
+    client = quota_client(ready, 1000)  # a key with quota again
+    assert pipeline.process(ready, client)["upgraded"] == min(tagged, pipeline.UPGRADE_PER_RUN)
+
+
+def test_without_a_key_the_rules_read_everything_at_once(ready, world):
+    run(ready, world, None)
+    assert ready.raw_posts_in_stage("fetched") == []
+    assert audit.audit(ready).backlog == 0

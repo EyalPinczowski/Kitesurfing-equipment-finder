@@ -4,10 +4,14 @@ location:
   home_city: ""          # e.g. Tel Aviv — used for distance ranking
   radius_km: 150
 
+requests:                 # shops and Yad2: random pause between pages (slow and polite)
+  min_delay_s: 4
+  max_delay_s: 10
+
 facebook:
   enabled: true
-  min_delay_s: 8          # random delay between requests, keeps us slow and polite
-  max_delay_s: 20
+  min_delay_s: 15         # random delay between requests, keeps us slow and polite
+  max_delay_s: 40
   # Group links; share links (facebook.com/share/g/...) are resolved to the real group
   # address on first fetch, using your cookies.
   groups:

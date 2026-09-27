@@ -235,7 +235,8 @@ class Database:
         self.path = Path(path)
         if str(path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
+        # timeout: the background search and the bot may write at the same moment
+        self.conn = sqlite3.connect(str(path), timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         if str(path) != ":memory:":
@@ -812,6 +813,48 @@ class Database:
                 (match_id, channel, json.dumps(payload, ensure_ascii=False), now_iso()),
             )
         return cur.lastrowid
+
+    def price_drops(self, threshold: float = 0.10, rec_item_ids=None, queries=None) -> list[dict]:
+        """Alerted listings whose price fell by `threshold` or more since their last alert
+        (your choice, #23). Only listings that still fit (status matched) — with filters, only
+        those matching your current set or watched searches. Dismissed, sold and gone listings
+        are left out."""
+        rows = self.conn.execute(
+            "SELECT l.id AS listing_id, l.price_ils, n.match_id, n.payload FROM notifications n "
+            "JOIN matches m ON m.id = n.match_id JOIN listings l ON l.id = m.listing_id "
+            "WHERE n.id = (SELECT MAX(n2.id) FROM notifications n2 JOIN matches m2 "
+            "ON m2.id = n2.match_id WHERE m2.listing_id = l.id) "
+            "AND l.price_ils IS NOT NULL AND l.sold = 0 AND l.status = 'matched' "
+            "AND NOT EXISTS (SELECT 1 FROM user_marks u WHERE u.target_kind = 'listing' "
+            "AND u.target_id = l.id AND u.status = 'dismissed') ORDER BY l.id"
+        ).fetchall()
+        tracked = None
+        if rec_item_ids is not None or queries is not None:
+            tracked = {
+                m["listing_id"]
+                for m in self.conn.execute("SELECT listing_id, rec_item_id, query FROM matches")
+                if m["rec_item_id"] in (rec_item_ids or ())
+                or (m["query"] and m["query"] in (queries or ()))
+            }
+        out = []
+        for r in rows:
+            if tracked is not None and r["listing_id"] not in tracked:
+                continue
+            before = json.loads(r["payload"]).get("price")
+            if before and r["price_ils"] <= before * (1 - threshold):
+                out.append(
+                    {
+                        "listing_id": r["listing_id"],
+                        "match_id": r["match_id"],
+                        "old_price": before,
+                        "new_price": r["price_ils"],
+                    }  # fmt: skip
+                )
+        return out
+
+    def get_match(self, match_id: int) -> dict | None:
+        row = self.conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+        return dict(row) if row else None
 
     def notifications(self, limit: int = 50) -> list[dict]:
         rows = self.conn.execute(

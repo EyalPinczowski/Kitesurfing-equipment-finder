@@ -357,6 +357,16 @@ def _add_warnings(a: Assembly) -> None:
         )
 
 
+def newness(a: Assembly) -> tuple[float, float]:
+    """(share of items bought new, mean known model year) — higher is newer."""
+    chosen = [m.listing for _, m in a.picks if m is not None]
+    if not chosen:
+        return (0.0, 0.0)
+    years = [x.year for x in chosen if x.year]
+    share_new = sum(1 for x in chosen if x.is_new) / len(chosen)
+    return (share_new, sum(years) / len(years) if years else 0.0)
+
+
 def best_assembly_under(
     build: Callable[[str], Recommendation],
     listings: list[Listing],
@@ -365,16 +375,18 @@ def best_assembly_under(
     condition_pref: str = "both",
     min_year: int | None = None,
 ) -> Assembly:
-    """Best quiver (comfortable > minimum > one kite) that can be bought complete within the
-    budget from real listings; otherwise the cheapest complete one; otherwise the fullest."""
+    """The quiver with the newest gear (your choice, #5) that can be bought complete within the
+    budget from real listings — more items new, then newer model years; ties go to the fuller
+    quiver. Otherwise the cheapest complete one; otherwise the fullest."""
     results = [
         assemble(build(v), listings, brand_mode, condition_pref, min_year) for v in QUIVER_VARIANTS
     ]
     complete = [r for r in results if r.complete]
     if budget is not None:
         fitting = [r for r in complete if r.total <= budget]
-        if fitting:
-            return fitting[0]  # results are already in best-first order
+        if fitting:  # results are in fullest-quiver-first order: max() keeps the first on ties
+            return max(fitting, key=newness)
     if complete:
         return min(complete, key=lambda r: r.total)
-    return min(results, key=lambda r: r.score())
+    # the fullest: the most items actually found in listings, then the usual ranking
+    return min(results, key=lambda r: (-sum(m is not None for _, m in r.picks), r.score()))

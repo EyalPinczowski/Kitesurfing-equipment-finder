@@ -83,10 +83,13 @@ class Fetchers:
                     self.settings.fb_cookies_path or "secrets/fb_cookies.json"
                 )
                 self._cache[name] = HttpFetcher(
-                    cookies, fbc.get("min_delay_s", 8), fbc.get("max_delay_s", 20)
+                    cookies, fbc.get("min_delay_s", 15), fbc.get("max_delay_s", 40)
                 )
             else:
-                self._cache[name] = HttpFetcher()
+                web = cfg.get("requests") or {}
+                self._cache[name] = HttpFetcher(
+                    None, web.get("min_delay_s", 4), web.get("max_delay_s", 10)
+                )
         return self._cache[name]
 
     def photo(self, url: str) -> bytes:
@@ -182,17 +185,37 @@ def collect(db: Database, settings, fetchers: Fetchers, run_id: int,
 # --- process ----------------------------------------------------------------------------------
 
 
+QUOTA_WAIT_H = 48  # longest a post waits for Gemini's quota before the rules read it
+
+
+def _waited_too_long(row: dict) -> bool:
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        seen = datetime.fromisoformat(row["first_seen_at"])
+    except (KeyError, TypeError, ValueError):
+        return True
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - seen > timedelta(hours=QUOTA_WAIT_H)
+
+
 UPGRADE_PER_RUN = 30  # rules-read posts re-read by Gemini per run once the quota is back
 
 
 def process(db: Database, client: GeminiClient | None, limit: int | None = None) -> Counter:
     """Every waiting post → prefilter → extraction → listings. Returns stage counts.
 
-    Posts the rules had to read because Gemini was out of quota are re-read by Gemini on a
-    later run (a few per run), so a busy day doesn't leave them rules-only for good.
+    When Gemini's daily quota runs out, the remaining posts wait (stage `fetched`) and are read
+    by Gemini on a later run — your choice: wait rather than let the offline rules guess. A post
+    waits at most QUOTA_WAIT_H (e.g. a key with no quota at all); then the rules read it and
+    Gemini re-reads it once it can. Posts
+    the rules read after a Gemini *error* are re-read by Gemini later (a few per run). Without
+    any Gemini key, the rules read everything.
     """
     stages: Counter = Counter()
     rows = db.raw_posts_in_stage("fetched", limit)
+    quota_out = client is not None and client.calls_today() >= client.rpd
     if client is not None and client.calls_today() < client.rpd:
         waiting = db.raw_posts_in_stage("extracted")
         upgrades = [r for r in waiting if r["stage_reason"] in ("rules:quota", "rules:error")]
@@ -208,14 +231,35 @@ def process(db: Database, client: GeminiClient | None, limit: int | None = None)
                 db.retire_listings(pid, 0)
                 stages["prefilter_rejected"] += 1
                 continue
+            waited_enough = _waited_too_long(row)
+            if quota_out and not waited_enough:
+                if row["stage_status"] == "fetched":
+                    stages["waiting_for_gemini"] += 1
+                continue  # stays as it is until Gemini has quota again
+            if quota_out and row["stage_status"] == "extracted":
+                continue  # an upgrade that has to wait too: keep the rules reading
             result = extract_post(
                 row["text"],
-                client,
+                None if quota_out else client,
                 source=row["source"],
                 url=row["url"],
                 seller=row["author"],
                 single_item=bool(row["hints"].get("single_item")),
+                no_client_reason=(
+                    f"Gemini quota: still out after {QUOTA_WAIT_H} h"
+                    if quota_out
+                    else "no Gemini key"
+                ),
             )
+            fallback = next((f for f in result.flags if f.startswith("fallback: Gemini")), "")
+            if client is None:
+                fallback = ""  # no key at all: the rules are the reader, nothing to wait for
+            if "quota" in fallback and not quota_out:
+                quota_out = True  # the quota just ran out: the rest wait for Gemini
+            if "quota" in fallback and not waited_enough:
+                if row["stage_status"] == "fetched":
+                    stages["waiting_for_gemini"] += 1
+                continue  # nothing saved from the rules' reading
             if result.status != "listing":
                 db.set_stage(pid, "not_listing", result.reason)
                 db.retire_listings(pid, 0)
@@ -225,10 +269,12 @@ def process(db: Database, client: GeminiClient | None, limit: int | None = None)
                 lid = db.add_listing(listing, source_id=row["source_id"], item_index=i)
                 db.set_listing_images(lid, row["image_urls"])
             db.retire_listings(pid, len(result.listings))
-            fallback = next((f for f in result.flags if f.startswith("fallback: Gemini")), "")
-            reason = result.method
-            if fallback:  # re-read by Gemini on a later run, when the quota is back
-                reason = "rules:quota" if "quota" in fallback else "rules:error"
+            # read by the rules: Gemini re-reads it on a later run
+            reason = (
+                ("rules:quota" if "quota" in fallback else "rules:error")
+                if fallback
+                else (result.method)
+            )
             db.set_stage(pid, "extracted", reason)
             if row["stage_status"] == "extracted":  # an upgrade of a rules-read post
                 stages["upgraded"] += 1

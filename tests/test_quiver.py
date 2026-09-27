@@ -332,7 +332,9 @@ def test_unknown_variant_rejected():
 
 
 @pytest.mark.parametrize("weight, lo, hi, style, skill", GRID)
-def test_one_kite_is_single_best_overlap(weight, lo, hi, style, skill):
+def test_one_kite_leans_to_light_wind(weight, lo, hi, style, skill):
+    """Your choice (#6): sized for the lower part of the range, never smaller than the kite
+    that covers the most of it."""
     p = prof(weight, lo, hi, style=style, skill=skill)
     plan = quiver.plan_kites(p, [], "one_kite")
     assert len(plan.slots) == 1
@@ -342,23 +344,26 @@ def test_one_kite_is_single_best_overlap(weight, lo, hi, style, skill):
         a, b = engine.kite_wind_range(size, weight, style, skill)
         return min(b, hi) - max(a, lo)
 
-    assert overlap(slot.size) == max(overlap(s) for s in engine.STANDARD_KITE_SIZES)
+    widest = max(engine.STANDARD_KITE_SIZES, key=lambda s: (overlap(s), s))
+    light = engine.kite_size_for(weight, lo + quiver.LIGHT_WIND_POINT * (hi - lo), style, skill)
+    assert slot.size == max(light, quiver.best_single_kite(weight, lo, hi, style, skill))
+    assert slot.size >= min(widest, quiver.best_single_kite(weight, lo, hi, style, skill))
     assert coverage_gaps(plan, lo, hi) == []  # every wind is covered or declared uncovered
 
 
 def test_one_kite_notes_under_and_overpowered():
     plan = quiver.plan_kites(prof(80, 10, 35), [], "one_kite")
-    assert plan.slots[0].size == 7
+    assert plan.slots[0].size == 11  # sized for the light part of 10–35 kn
     assert plan.notes == [
-        "One kite: underpowered below 21.5 kn.",
-        "One kite: overpowered above 32.5 kn.",
+        "One kite: underpowered below 13.5 kn.",
+        "One kite: overpowered above 21 kn.",
     ]
-    assert plan.uncovered == [(10, 21.5), (32.5, 35)]
+    assert plan.uncovered == [(10, 13.5), (21.0, 35)]
 
 
 def test_one_kite_narrow_range_fully_covered():
     plan = quiver.plan_kites(prof(80, 15, 20), [], "one_kite")
-    assert (plan.slots[0].size, plan.uncovered, plan.notes) == (10, [], [])
+    assert (plan.slots[0].size, plan.uncovered, plan.notes) == (11, [], [])
 
 
 def test_one_kite_prefers_owned_kite_when_almost_as_good():
@@ -370,14 +375,14 @@ def test_one_kite_prefers_owned_kite_when_almost_as_good():
 
 def test_one_kite_ignores_poor_owned_kite():
     plan = quiver.plan_kites(prof(80, 20, 30), [OwnedItem("kite", size=17)], "one_kite")
-    assert plan.slots[0].owned is None and plan.slots[0].size == 7
+    assert plan.slots[0].owned is None and plan.slots[0].size == 8
 
 
 def test_one_kite_explanation():
     rec = quiver.recommend_set(prof(), [], "one_kite")
     assert "Option: one kite — simplest and cheapest." in rec.explanation
-    assert [i.size for i in rec.items if i.type == "kite"] == [9]
-    assert "bar for 9 m²" in next(i.reason for i in rec.items if i.type == "bar")
+    assert [i.size for i in rec.items if i.type == "kite"] == [12]
+    assert "bar for 12 m²" in next(i.reason for i in rec.items if i.type == "bar")
 
 
 @pytest.mark.parametrize(

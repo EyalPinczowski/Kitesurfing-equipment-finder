@@ -2,7 +2,8 @@
 
 These are choices I made on my own so the work could keep moving. Each one works today and
 is tested, but it's a judgement call or can't be checked from the build environment. Reply
-with the numbers you approve or want changed; nothing here is final until you do.
+with the numbers you approve or want changed; nothing here is final until you do. Items marked
+✅ have your answer (asked on 2026-09-27) and are applied.
 
 Status key: **needs check** = only you (or network access) can confirm it · **judgement** = a
 design choice with a reasonable alternative.
@@ -14,7 +15,9 @@ design choice with a reasonable alternative.
 3. **Typical Israeli prices** used for estimates (`prices_il.yaml`): a used kite costs about 45% of new, bar ₪1,300 used, harness ₪700 used, and so on. *needs check.* These will be replaced by real market medians once listings exist.
 4. **Gusty-spot factor 0.93**, i.e. about 7% smaller kites. *judgement.*
 5. **Budget preference order**: comfortable, then minimum, then one kite. Quiver quality beats new versus used. *judgement.*
+   - ✅ **Your answer: newest gear first.** Changed: every option bought new is tried before any used one, and among real-listing sets the one with more new items and newer years wins.
 6. **One-kite pick = the kite covering the most of your wind range.** For 80 kg at 12–25 kn that's 9 m², underpowered below 16.5 kn. A bigger single kite may suit Mediterranean summers better. *judgement.*
+   - ✅ **Your answer: bigger, for light wind.** Changed: the one kite is sized a quarter of the way up your range (never smaller than before). For 80 kg at 12–25 kn: 12 m², 12.5–19 kn.
 7. **Unpriced listings are ranked at typical price +15%.** *judgement.*
 
 ## Reading posts (Step 3)
@@ -28,35 +31,46 @@ design choice with a reasonable alternative.
 11. **The page parsers were built from each platform's known format, not from your real pages**, because the sites are blocked here. *needs check.* This covers WooCommerce shops (likely laguna.co.il and yamitysb.co.il, from their `/product-category/` URLs), Yad2's embedded search data, and Facebook's mobile group pages and Marketplace data. The first real run on your phone will tell. Each parser reports "page format may have changed" instead of silently returning nothing.
 12. **The Yad2 search URL** `https://www.yad2.co.il/products/all?text={query}&page={page}` is my best guess. *needs check.* It can be changed in `config/sources.yaml`.
 13. **Facebook Marketplace location `telaviv`, newest-first, first results page only.** *needs check / judgement.* Marketplace loads further results with scripts, so coverage comes from several queries and frequent runs. The run report marks this as "partial by design".
+   - ✅ **Approved** (Tel Aviv).
 14. **Facebook groups: stop after 10 already-known posts in a row, at most 5 pages per run.** *judgement.* This trades a little completeness for fewer requests and a lower ban risk. Group feeds are ordered by activity, so an old post with new comments can appear between new ones.
+   - ✅ **Approved** (10 known posts, 5 pages).
 15. **Shop items count as new unless the title says used, demo or יד שנייה.** *judgement.*
 16. **Out-of-stock shop sizes are kept and marked "sold out"**, not dropped. *judgement.* This keeps the audit exact.
 17. **Requests are polite**: a random 2–6 s pause between pages (8–20 s for Facebook, set in `sources.yaml`) and a mobile browser user agent. *judgement.*
+   - ✅ **Your answer: slower / safer.** Changed: 4–10 s between shop and Yad2 pages, 15–40 s for Facebook (`config/sources.yaml`).
 
 ## Matching and runs (Step 5)
 
 18. **Match score = 45% price against market/typical, 30% size fit, 25% photo condition.** *judgement.* There are small deductions when the size or year isn't stated. It only orders results: every listing that fits is kept.
+   - ✅ **Your answer: 50% size fit, 25% condition, 25% price.** Changed.
 19. **The "market" price is the median of at least 3 comparable collected listings** (same kind, size in range, new/used). Below 3, the estimate table is used. *judgement.*
 20. **When the Gemini quota runs out mid-run, the remaining posts are read by the offline rules straight away** (so alerts aren't delayed), then **re-read by Gemini on later runs, 30 per run.** *judgement.* The alternative is to wait for the quota and alert later.
+   - ✅ **Your answer: wait for Gemini.** Changed: posts wait (shown in `/report`) and are read by Gemini when the quota is back. Without any key, the rules still read everything.
 21. **Photo checks: at most 5 per run, and only for listings that match**, to save quota. *judgement.*
 22. **The same item posted on several sources** (e.g. Yad2 and a Facebook group) is still alerted once per source. **Done in Step 6:** likely duplicates (same type, brand, size and price) now become one alert that lists the other sources. A listing with no brand is never folded, since it can't be told apart. *judgement.*
 23. **One alert per listing**, even if it fits several items in your set. After an alert, a later price drop doesn't re-alert. *judgement.* Re-alerting on price drops is suggested for later.
+   - ✅ **Your answer: re-alert any alerted listing on a 10%+ price drop** (not dismissed or sold). Changed: the card starts with "📉 Price dropped ₪X → ₪Y".
 
 ## Telegram bot and Mini App (Step 6)
 
 24. **The bot calls Telegram's Bot API directly (plain HTTPS through `requests`) instead of using the python-telegram-bot library.** *judgement.* That's one less dependency to install in Termux, and every call can be tested. The trade-off is that I maintain the few calls the bot uses.
 25. **Who may use the bot:** the chat in `TELEGRAM_CHAT_ID`. If that isn't set, **the first chat that sends /start claims the bot** and everyone else gets "This bot is private." *judgement.* It's safer to set `TELEGRAM_CHAT_ID` (the README will show how). If someone else found the bot before you did, delete the `tg_owner_chat` row from the database, or set the variable.
+   - ✅ **Your answer: require TELEGRAM_CHAT_ID.** Changed: without it the bot answers nobody.
 26. **At most 20 alerts per round, 1 second apart.** The rest wait for the next round, which keeps the bot under Telegram's flood limits. If Telegram asks the bot to wait (HTTP 429), it waits up to 30 s and tries once more. *judgement.*
+   - ✅ **Approved** (one card per listing, at most 20 per round).
 27. **Alert layout: the card comes first, then its photos as a reply to it** (1 photo alone, 2–4 as an album). *judgement.* The card is what counts as "sent". If Telegram can't fetch a photo, the card still goes out, and an alert is never repeated just to resend photos. Photos-above-card would look nicer, but a failed card would then resend the album every round.
 28. **The Mini App runs on the phone** (a small built-in web server). It's reached through a **free Cloudflare quick tunnel** (`cloudflared`, no account), and its address changes on every start. The bot updates its menu button each time. Every request is checked against Telegram's signature and your user id, and a login is valid for 24 hours. *needs check.* This needs `pkg install cloudflared` to work on your phone, and the phone must be online for the app to open. The alternative is a fixed free host (e.g. GitHub Pages) for the page, but the data API would still have to reach the phone.
 29. **Typing a button's label counts as tapping it** ("Intermediate", "twin tip"). A harness in "gear you own" asks only for brand/model, not its size. *judgement.*
 30. **Price-drop re-alerts are not done yet** (suggested in Step 5). *judgement.* An alerted listing is never re-sent, even if its price drops. This is still on the suggestion list.
+   - ✅ Done: see #23.
 
 ## The always-on agent and Termux (Step 7)
 
 31. **One process does everything** (searches, bot, Mini App, backups). *judgement.* It's simple and light on the phone, but **the bot doesn't answer while a search runs**. A Facebook run with polite pauses can take a few minutes; your messages aren't lost, they're answered right after. The alternative, running searches in a separate thread, is more complex and needs more care with the database.
+   - ✅ **Your answer: fix it now.** Changed: searches run in a background thread with their own database connection; the bot answers during a run, and `/run` while one is going says so.
 32. **Retries**: a source is retried after 15 minutes only when all of it failed (e.g. no network). One broken shop, or expired cookies, waits for the normal interval. *judgement.*
 33. **Problem messages**: each source problem is sent once, with a "works again" message when it's fixed. Repeats of the same problem stay quiet. *judgement.*
 34. **Daily backups go to `data/backups/daily/`, keeping 7.** *judgement.* They stay inside Termux: `/sdcard` needs `termux-setup-storage` and an extra permission, so a copy there is left to `kitefinder backup /sdcard/Download`.
+   - ✅ **Approved** (inside Termux only).
 35. **The installer adds a termux-services background service plus Termux:Boot autostart, and holds a wake lock.** *needs check.* This is written from Termux's documentation and not yet run on a real phone. The wake lock uses some battery; without it Android pauses searches when the screen is off.
 36. **Stopping the service (`sv stop`/`restart`) stops at once, even mid-run.** *judgement.* Nothing is lost, because database writes are atomic. The interrupted run shows as unfinished in `/report` and is simply redone later.

@@ -12,16 +12,6 @@
 ---
 <photo>
 ---
-🦺 <b>Harness ION size L</b>
-💰 ₪450 · condition not stated · ₪250 below the typical ₪700
-📍 Netanya
-📝 טרפז ION מידה L | מחיר: 450 ₪ | נתניה
-🔍 Condition: not checked from photos yet
-🌐 Yad2
-✅ fits your harness size M/L
-  [✅ Favorite] [❌ Dismiss]
-  [🔗 Open the post]
----
 🪁 <b>Kite 9m² Cabrinha 2021</b>
 💰 ₪3,600 · condition not stated · ₪300 above the market ₪3,300
 📍 Givatayim
@@ -45,6 +35,16 @@
   [🔗 Open the post]
 ---
 <photo>
+---
+🦺 <b>Harness ION size L</b>
+💰 ₪450 · condition not stated · ₪250 below the typical ₪700
+📍 Netanya
+📝 טרפז ION מידה L | מחיר: 450 ₪ | נתניה
+🔍 Condition: not checked from photos yet
+🌐 Yad2
+✅ fits your harness size M/L
+  [✅ Favorite] [❌ Dismiss]
+  [🔗 Open the post]
 ---
 🦺 <b>Harness ION size M</b>
 💰 ₪1,590 · new · about the typical ₪1,600
@@ -95,16 +95,6 @@
 ---
 <photo>
 ---
-🏄 <b>Board (twintip) 138 cm</b>
-💰 ₪1,100 · condition not stated · ₪300 below the typical ₪1,400
-📍 location unknown
-📝 גלשן טווין טיפ 138x41 ב-1100 ש"ח
-🔍 Condition: not checked from photos yet
-🌐 Facebook · רון
-✅ fits your board 138–141 cm
-  [✅ Favorite] [❌ Dismiss]
-  [🔗 Open the post]
----
 🪁 <b>Kite 10m² Duotone 2021</b>
 💰 ₪3,400 · condition not stated · about the market ₪3,300
 📍 location unknown
@@ -117,16 +107,6 @@
 ---
 <photo>
 ---
-🏄 <b>Board (twintip) 138 cm</b>
-💰 ₪1,200 · condition not stated · ₪200 below the typical ₪1,400
-📍 Haifa
-📝 גלשן קייט טווין טיפ 138 | כולל סטרפים | מחיר: 1200 ₪ | חיפה
-🔍 Condition: not checked from photos yet
-🌐 Yad2
-✅ fits your board 138–141 cm
-  [✅ Favorite] [❌ Dismiss]
-  [🔗 Open the post]
----
 🪁 <b>Kite 10m² Duotone 2024</b>
 💰 ₪7,950 · new · ₪1,750 above the typical ₪6,200
 📍 location unknown
@@ -138,6 +118,26 @@
   [🔗 Open the post]
 ---
 <photo>
+---
+🏄 <b>Board (twintip) 138 cm</b>
+💰 ₪1,100 · condition not stated · ₪300 below the typical ₪1,400
+📍 location unknown
+📝 גלשן טווין טיפ 138x41 ב-1100 ש"ח
+🔍 Condition: not checked from photos yet
+🌐 Facebook · רון
+✅ fits your board 138–141 cm
+  [✅ Favorite] [❌ Dismiss]
+  [🔗 Open the post]
+---
+🏄 <b>Board (twintip) 138 cm</b>
+💰 ₪1,200 · condition not stated · ₪200 below the typical ₪1,400
+📍 Haifa
+📝 גלשן קייט טווין טיפ 138 | כולל סטרפים | מחיר: 1200 ₪ | חיפה
+🔍 Condition: not checked from photos yet
+🌐 Yad2
+✅ fits your board 138–141 cm
+  [✅ Favorite] [❌ Dismiss]
+  [🔗 Open the post]
 ---
 Run #1: ✓ all accounted for
 Posts: 18 new/changed → 16 with gear, 1 not for sale, 1 off-topic, 0 failed

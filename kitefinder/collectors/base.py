@@ -90,8 +90,8 @@ class HttpFetcher:
     def __init__(
         self,
         cookies: dict | None = None,
-        min_delay: float = 2.0,
-        max_delay: float = 6.0,
+        min_delay: float = 4.0,
+        max_delay: float = 10.0,
         timeout: float = 30.0,
         sleep: Callable[[float], None] = time.sleep,
     ):

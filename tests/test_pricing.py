@@ -83,13 +83,20 @@ def build_for(profile, owned=()):
     "budget, pref, variant, condition, fits",
     [
         (30000, "both", "comfortable", "new", True),
-        (21000, "both", "comfortable", "used", True),  # quiver quality beats new condition
+        (
+            21000,
+            "both",
+            "minimum",
+            "new",
+            True,
+        ),  # your choice (#5): new gear before a fuller quiver
+        (15000, "both", "one_kite", "new", True),  # one new kite beats a used comfortable quiver
         (21000, "new", "minimum", "new", True),
-        (13000, "both", "comfortable", "used", True),
+        (13000, "both", "comfortable", "used", True),  # nothing new fits: the fullest used
         (9500, "both", "minimum", "used", True),
         (9499, "both", "one_kite", "used", True),
-        (6200, "used", "one_kite", "used", True),
-        (6199, "used", "one_kite", "used", False),
+        (6600, "used", "one_kite", "used", True),
+        (6599, "used", "one_kite", "used", False),
         (20000, "new", "one_kite", "new", True),
         (1000, "new", "one_kite", "new", False),
     ],
@@ -109,7 +116,7 @@ def test_budget_pick_is_the_best_affordable(weight, budget, pref):
     p = Profile(weight, 86, 12, 25)
     build = build_for(p)
     rec, ok = pricing.best_within_budget(build, budget, pref)
-    order = [(v, c) for v in QUIVER_VARIANTS for c in pricing.conditions_for(pref)]
+    order = [(v, c) for c in pricing.conditions_for(pref) for v in QUIVER_VARIANTS]  # new first
     picked = order.index((rec.variant, rec.price_condition))
     for v, c in order[: picked if ok else len(order)]:
         other = pricing.price_recommendation(build(v), c)

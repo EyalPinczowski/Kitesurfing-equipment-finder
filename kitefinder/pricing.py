@@ -51,15 +51,16 @@ def conditions_for(pref: str) -> tuple[str, ...]:
 def best_within_budget(
     build: Callable[[str], Recommendation], budget: int, condition_pref: str = "both"
 ) -> tuple[Recommendation, bool]:
-    """The best variant (comfortable > minimum > one kite) and condition that fits the budget.
+    """The newest gear that fits the budget (your choice, #5): every variant bought new is
+    tried before any used one; within the same condition, comfortable > minimum > one kite.
 
     `build(variant)` makes a fresh recommendation. Returns (recommendation, fits). When nothing
     fits, returns the cheapest rideable set (fits=False) so the caller can say how far over it
     is — never a partial set, since a kite without a bar, harness or board can't be ridden.
     """
     cheapest: Recommendation | None = None
-    for variant in QUIVER_VARIANTS:
-        for condition in conditions_for(condition_pref):
+    for condition in conditions_for(condition_pref):  # new first
+        for variant in QUIVER_VARIANTS:
             rec = price_recommendation(build(variant), condition)
             rec.budget_ils = budget
             if total(rec) <= budget:

@@ -39,7 +39,7 @@ Edit `.env` (`nano .env`):
 |---|---|
 | `GEMINI_API_KEY` | <https://aistudio.google.com/apikey> → *Create API key* (free). Without it, posts are read by offline rules (less accurate) and photos aren't checked. |
 | `TELEGRAM_BOT_TOKEN` | In Telegram, talk to **@BotFather** → `/newbot` → copy the token. |
-| `TELEGRAM_CHAT_ID` | Your numeric id — ask **@userinfobot**. Recommended. If empty, the first chat that sends `/start` to your bot owns it. |
+| `TELEGRAM_CHAT_ID` | Your numeric id — ask **@userinfobot**. **Required**: the bot answers only this chat, and nobody while it's empty. |
 | `FB_COOKIES_PATH` | Default `secrets/fb_cookies.json`, see below. |
 
 **Facebook cookies** (for groups and Marketplace): on a computer, log in to Facebook, install
@@ -82,7 +82,9 @@ The six shops from `config/sources.yaml` are searched from the start; add more w
 Alerts arrive on their own: websites every 3 h, Yad2 every hour, Facebook every 2 h (change in
 `config/sources.yaml` → `schedule`). Each alert: title, price vs. the market, location,
 description, condition from photos, source, why it fits, and ✅ Favorite / ❌ Dismiss / 🔗 Open.
-The same item posted in two places comes as one alert.
+The same item posted in two places comes as one alert. If an alerted listing's price later
+drops by 10% or more, you get it again with "📉 Price dropped ₪X → ₪Y". Searches run in the
+background, so the bot keeps answering during a long run.
 
 **Share to Termux**: in any app, share a post or product link to Termux — it's read and
 alerted like the rest.
@@ -105,8 +107,8 @@ Termux: `termux-setup-storage` once, then `kitefinder backup /sdcard/Download`. 
 | "page format may have changed" / "blocked by bot protection" | the site changed or blocks automated reads; run `kitefinder run --source sites --save-pages pages/` and send me the saved pages |
 | "The Mini App is off: cloudflared …" | `pkg install cloudflared`, then `sv restart kitefinder` |
 | No alerts at night / with the screen off | battery optimisation: set Termux to *Unrestricted*; the service holds a wake lock |
-| Gemini "quota" | the free daily limit; posts are read by the offline rules and re-read by Gemini later |
-| The bot answers "This bot is private." to you | set `TELEGRAM_CHAT_ID` in `.env`, then `sv restart kitefinder` |
+| Gemini "quota" / "posts wait for the next run" | the free daily limit; the posts wait and are read by Gemini when the quota is back (tomorrow) |
+| The bot answers "This bot is private." to you | set `TELEGRAM_CHAT_ID` in `.env` to your id from @userinfobot, then `sv restart kitefinder` |
 
 ## For developers
 

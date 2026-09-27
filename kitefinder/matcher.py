@@ -94,7 +94,7 @@ def score_listing(
         reasons.append("no price stated — ask the seller")
     fit = _fit_score(item, listing)
     cond = condition_score / 10 if condition_score is not None else 0.6
-    score = 0.45 * price_score + 0.3 * fit + 0.25 * cond
+    score = 0.5 * fit + 0.25 * cond + 0.25 * price_score  # your choice: size fit first
     if not m.verified_size:
         score -= 0.05
         reasons.append("size not stated")

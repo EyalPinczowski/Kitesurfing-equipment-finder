@@ -29,6 +29,7 @@ class Alert:
     text: str  # HTML
     photos: list[str] = field(default_factory=list)
     buttons: list[list[dict]] = field(default_factory=list)
+    price_ils: int | None = None  # the price this alert showed (a later drop is measured from it)
 
 
 def _e(text) -> str:
@@ -86,12 +87,18 @@ def format_alert(
     photos: list[str],
     assessment: dict | None = None,
     also: list[Listing] = (),
+    dropped_from: int | None = None,
 ) -> Alert:
     why = match.get("why", "")
     description = (listing.description or "").strip(" |\n") or "(no description in the post)"
     if len(description) > MAX_DESCRIPTION:
         description = description[: MAX_DESCRIPTION - 1].rstrip() + "…"
-    lines = [
+    lines = (
+        [f"📉 <b>Price dropped</b> ₪{dropped_from:,} → ₪{listing.price_ils:,}"]
+        if dropped_from
+        else []
+    )
+    lines += [
         f"{EMOJI.get(listing.type, '📦')} <b>{_e(title(listing))}</b>",
         f"💰 {_e(_price_line(listing, why))}",
         f"📍 {_e(listing.location or 'location unknown')}",
@@ -123,6 +130,7 @@ def format_alert(
         "\n".join(line for line in lines if line),
         photos[:MAX_PHOTOS],
         buttons,
+        listing.price_ils,
     )
 
 
