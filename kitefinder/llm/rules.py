@@ -280,11 +280,14 @@ def _merge_into_one(items: list[dict]) -> list[dict]:
 def extract_raw(text: str, single_item: bool = False) -> dict:
     """Same JSON shape as the Gemini answer. `single_item`: the text describes one product
     (a shop product page), so repeated mentions are the same item."""
+    intent = nz.sale_intent(text)
+    if intent == "wanted":  # never a listing: someone asking to buy
+        return {"is_sale_post": False, "not_sale_reason": "looking to buy", "items": []}
+    if intent == "mixed":  # "selling my 9m, looking for a 12m": read only what's offered
+        text = nz.without_wanted_parts(text)
     low = text.lower()
     offering = nz.has_any(low, ("מוכר", "מוכרת", "למכירה", "for sale", "selling"))
     selling = nz.has_any(low, SALE_WORDS) or bool(_prices(text)) or nz.has_any(low, nz.SOLD_WORDS)
-    if nz.has_any(low, nz.WANTED_WORDS) and not offering:
-        return {"is_sale_post": False, "not_sale_reason": "looking to buy", "items": []}
     if nz.has_any(low, nz.NOT_SALE_WORDS) and not offering:
         return {"is_sale_post": False, "not_sale_reason": "lesson / trip / course", "items": []}
     chunks = _chunks(text)

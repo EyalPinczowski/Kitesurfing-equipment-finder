@@ -179,6 +179,11 @@ def extract_post(
     text = (text or "").strip()
     if not text:
         return ExtractResult("not_listing", reason="empty post", method="rules")
+    intent = nz.sale_intent(text)
+    if intent == "wanted":  # asking to buy: never a listing (and no Gemini call spent on it)
+        return ExtractResult("not_listing", reason="looking to buy", method="rules")
+    if intent == "mixed":  # only the part that's offered is read (by Gemini or the rules)
+        text = nz.without_wanted_parts(text).strip() or text
     fallback_reason = no_client_reason
     if client is not None:
         try:

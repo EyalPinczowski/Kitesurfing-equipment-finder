@@ -9,6 +9,7 @@ from fakes import FakeTransport, gemini_reply, noisy_answer, post_text
 
 from kitefinder.llm import extract as ex
 from kitefinder.llm import gemini as gm
+from kitefinder.llm import normalize as nz
 
 HOLDOUT = yaml.safe_load(
     (Path(__file__).parent / "fixtures" / "posts_holdout.yaml").read_text(encoding="utf-8")
@@ -32,10 +33,13 @@ def model_client(answer_for, db=None):
 @pytest.mark.parametrize("post", ALL_POSTS, ids=lambda p: p["id"])
 def test_model_answers_are_normalized_exactly(post, variant):
     """Right values in messy formats (₪3,200 / '12 מטר' / Hebrew brands) → exact labels."""
-    client, _ = model_client(lambda p, text: noisy_answer(p["expect"], variant))
+    client, transport = model_client(lambda p, text: noisy_answer(p["expect"], variant))
     result = ex.extract_post(post["text"], client, source="facebook", url="u")
     failures = [(name, detail) for name, good, detail in score(post, result) if not good]
     assert failures == []
+    if nz.sale_intent(post["text"]) == "wanted":  # asking to buy: rejected before any Gemini call
+        assert (result.method, result.reason, transport.requests) == ("rules", "looking to buy", [])
+        return
     assert result.method == "gemini"
     assert all(
         listing.extracted_by == "gemini" and listing.source == "facebook"

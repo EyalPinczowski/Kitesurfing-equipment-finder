@@ -23,7 +23,7 @@ class Clock:
 
 
 SETUP = [
-    "/start", "80", "86", ("press", "q:intermediate"), ("press", "q:twintip"), "12-25",
+    "/start", "80", "86", ("press", "q:intermediate"), ("press", "q:twintip"), ("press", "q:freeride"), "12-25",
     ("press", "q:done"), ("press", "q:skip"), ("press", "q:both"), ("press", "q:skip"),
     ("press", "q:skip"), CATEGORY, ("press", "q:done"),
 ]  # fmt: skip

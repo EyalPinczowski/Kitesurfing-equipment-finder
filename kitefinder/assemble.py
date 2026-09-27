@@ -280,9 +280,11 @@ def assemble(
     condition_pref: str = "both",
     min_year: int | None = None,
 ) -> Assembly:
-    """The cheapest way to buy this recommendation from the given listings."""
+    """The cheapest way to buy this recommendation from the given listings. Kites whose model
+    is made for other riding than yours (a wave kite for a twin tip rider) are left out."""
     if brand_mode not in BRAND_MODES:
         raise ValidationError(f"brands must be one of {', '.join(BRAND_MODES)}")
+    listings, skipped = _for_your_riding(rec, listings)
     items = list(rec.items)
     if brand_mode == "mixed":
         options = _options(items, listings, condition_pref, lambda _: None, min_year)
@@ -316,7 +318,26 @@ def assemble(
             if result is None or cand.score() < result.score():
                 result = cand
     _add_warnings(result)
+    if skipped and any(it.type == "kite" and m is None for it, m in result.picks):
+        result.warnings.append(
+            f"Left out {skipped} kite listing{'s' if skipped != 1 else ''} made for other "
+            "riding than yours."
+        )
     return result
+
+
+def _for_your_riding(rec: Recommendation, listings: list[Listing]) -> tuple[list[Listing], int]:
+    from . import kite_models
+
+    p = rec.profile
+    if p is None:
+        return listings, 0
+    kept = []
+    for listing in listings:
+        model = kite_models.lookup(listing.brand, listing.model) if listing.type == "kite" else None
+        if model is None or kite_models.suits(model, p.style, p.discipline) != "no":
+            kept.append(listing)
+    return kept, len(listings) - len(kept)
 
 
 def _add_warnings(a: Assembly) -> None:

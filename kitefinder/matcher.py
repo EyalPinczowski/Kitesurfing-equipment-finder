@@ -6,7 +6,7 @@ import re
 import statistics
 from dataclasses import dataclass
 
-from . import pricing
+from . import kite_models, pricing
 from .assemble import match as fits
 from .llm import normalize as nz
 from .models import Listing, RecItem, Recommendation, ValidationError
@@ -57,6 +57,9 @@ def _fit_score(item: RecItem, listing: Listing) -> float:
     return max(0.0, 1 - abs(listing.size - item.size) / (span * 2))
 
 
+STYLE_FIT = {"best": 0.1, "ok": 0.0, "no": -0.4}  # added to the size-fit score
+
+
 def score_listing(
     item: RecItem,
     listing: Listing,
@@ -65,7 +68,11 @@ def score_listing(
     condition_pref: str = "both",
     min_year: int | None = None,
     typical_cache: dict | None = None,
+    style: str | None = None,
+    discipline: str = "",
 ) -> Scored | None:
+    """`style` (your riding): a kite model made for it ranks higher, one made for other riding
+    lower and flagged — never dropped, since the reference can be wrong."""
     m = fits(item, listing, condition_pref, min_year)
     if m is None:
         return None
@@ -93,6 +100,12 @@ def score_listing(
         price_score = 0.4
         reasons.append("no price stated — ask the seller")
     fit = _fit_score(item, listing)
+    model = (
+        kite_models.lookup(listing.brand, listing.model) if style and item.type == "kite" else None
+    )
+    if model is not None:
+        fit += STYLE_FIT[kite_models.suits(model, style, discipline)]
+        reasons.append(kite_models.style_note(model, style, discipline))
     cond = condition_score / 10 if condition_score is not None else 0.6
     score = 0.5 * fit + 0.25 * cond + 0.25 * price_score  # your choice: size fit first
     if not m.verified_size:
@@ -118,15 +131,19 @@ def _slot(item: RecItem) -> str:
 
 def match_recommendation(rec: Recommendation, listings: list[Listing],
                          conditions: dict[int, float] | None = None, condition_pref: str = "both",
-                         min_year: int | None = None) -> list[Scored]:  # fmt: skip
-    """Every (listing, item) pair that fits, best score per listing, best first."""
+                         min_year: int | None = None, style: str | None = None,
+                         discipline: str = "") -> list[Scored]:  # fmt: skip
+    """Every (listing, item) pair that fits, best score per listing, best first. The riding
+    style comes from the set's profile unless given (a typed search has no profile)."""
     conditions = conditions or {}
+    if style is None and rec.profile is not None:
+        style, discipline = rec.profile.style, rec.profile.discipline
     best: dict[int, Scored] = {}
     cache: dict = {}
     for listing in listings:
         for item in rec.items:
             s = score_listing(item, listing, listings, conditions.get(listing.id), condition_pref,
-                              min_year, cache)  # fmt: skip
+                              min_year, cache, style, discipline)  # fmt: skip
             if s is not None and (listing.id not in best or s.score > best[listing.id].score):
                 best[listing.id] = s
     return sorted(best.values(), key=lambda s: (-s.score, s.listing.id or 0))
@@ -157,6 +174,8 @@ def parse_query(text: str) -> RecItem:
 
 
 def search(text: str, listings: list[Listing], conditions: dict[int, float] | None = None,
-           condition_pref: str = "both", min_year: int | None = None) -> list[Scored]:  # fmt: skip
+           condition_pref: str = "both", min_year: int | None = None,
+           style: str | None = None, discipline: str = "") -> list[Scored]:  # fmt: skip
     rec = Recommendation(profile=None, items=[parse_query(text)], kind="single")  # type: ignore[arg-type]
-    return match_recommendation(rec, listings, conditions, condition_pref, min_year)
+    return match_recommendation(rec, listings, conditions, condition_pref, min_year, style,
+                                discipline)  # fmt: skip

@@ -87,8 +87,14 @@ class BotApp:
             last = i + 4000 >= len(text)
             self.api.send_message(self.owner, text[i : i + 4000], buttons if last else None, html)
 
-    def _replies(self, replies: list[Reply]) -> None:
+    def _replies(self, replies: list[Reply], message_id: int | None = None) -> None:
         for r in replies:
+            if r.edit and message_id is not None:
+                try:
+                    self.api.edit_message(self.owner, message_id, r.text, r.buttons)
+                    continue
+                except TelegramError:  # e.g. the message is too old to edit: send it anew
+                    pass
             self.say(r.text, r.buttons or None)
 
     def _cli(self, argv: list[str]) -> str:
@@ -162,7 +168,8 @@ class BotApp:
             return
         self.api.answer_callback(cq["id"])
         if kind == "q":
-            self._replies(self.setup.answer(value))
+            message_id = (cq.get("message") or {}).get("message_id")
+            self._replies(self.setup.answer(value, pressed=True), message_id)
         elif kind == "cmd" and value in CLI_COMMANDS:
             self.say(self._cli(CLI_COMMANDS[value]("")))
         elif kind == "run":

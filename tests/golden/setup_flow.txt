@@ -8,7 +8,11 @@ Your level?
 What do you ride?
   [Twin tip] [Surfboard] [Foil]
 ---
-Where do you ride? Tap a region, type spots (e.g. בת גלים, Sdot Yam) — or type a wind range in knots like 12-25.
+What kind of twin tip riding? (so I suggest the right kite models)
+  [Freeride] [Big air]
+  [Freestyle] [A bit of everything]
+---
+Where do you ride? Tap a region and pick your spots from its list (as many as you like, from several regions). Or type them — several at once: בת גלים, Sdot Yam — or type a wind range in knots like 12-25.
   [North] [Center] [South]
   [Eilat] [Kinneret]
 ---
@@ -65,7 +69,7 @@ Weight: 80 kg
 Hip/waist: 86 cm
 Wind range: 10–18 kn (from your areas, summer)
 Skill: intermediate
-Style: twintip
+Style: twintip (freeride)
 Spots: Bat Galim, Sdot Yam / Caesarea
 Gusty spots: no
 Budget: ₪8,000

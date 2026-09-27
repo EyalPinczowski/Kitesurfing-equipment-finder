@@ -42,7 +42,7 @@ def send(app, *items):
 # --- the questionnaire ------------------------------------------------------------------------
 
 SETUP = [
-    "/setup", "80", "86", ("press", "q:intermediate"), ("press", "q:twintip"),
+    "/setup", "80", "86", ("press", "q:intermediate"), ("press", "q:twintip"), ("press", "q:freeride"),
     "בת גלים, Sdot Yam", ("press", "q:summer"),
     ("press", "q:add"), ("press", "q:kite"), "12", "North Orbit 2021",
     ("press", "q:add"), ("press", "q:harness"), ("press", "q:skip"),
@@ -103,6 +103,7 @@ def test_bad_answers_are_explained_and_asked_again(app, tg):
         "maybe",
         ("press", "q:advanced"),
         ("press", "q:twintip"),
+        ("press", "q:freeride"),
         "bat galm",
     )
     texts = [b["text"] for b in tg.sent()]
@@ -473,9 +474,21 @@ def test_empty_output_is_not_sent_empty(app, tg, monkeypatch):
 
 
 def test_typed_button_labels_count_as_presses(app, tg):
-    send(app, "/setup", "80", "86", "Intermediate", "twin tip", "north", "All year", "done")
+    send(
+        app,
+        "/setup",
+        "80",
+        "86",
+        "Intermediate",
+        "twin tip",
+        "Big air",
+        "north",
+        "All year",
+        "done",
+    )
     state = app.setup.state()
     assert state["draft"]["skill"] == "intermediate" and state["draft"]["style"] == "twintip"
+    assert state["draft"]["discipline"] == "bigair"
     assert state["draft"]["season"] == "all" and "Bat Galim" in state["draft"]["spots"]
     assert state["step"] == "budget"
 
@@ -484,7 +497,16 @@ def test_typed_button_labels_count_as_presses(app, tg):
 
 
 def test_setup_refuses_a_wind_range_the_profile_cannot_hold(app, tg):
-    send(app, "/setup", "80", "86", ("press", "q:advanced"), ("press", "q:twintip"), "52-58")
+    send(
+        app,
+        "/setup",
+        "80",
+        "86",
+        ("press", "q:advanced"),
+        ("press", "q:twintip"),
+        ("press", "q:freeride"),
+        "52-58",
+    )
     assert tg.sent()[-1]["text"].startswith("⚠ wind range should look like 12-25")
     assert app.setup.state()["step"] == "areas"
 
@@ -645,3 +667,66 @@ def test_a_match_replaced_while_its_card_goes_out_is_still_recorded(world_app, d
     assert world_app.send_alerts() == 1
     (note,) = db.notifications(1)
     assert note["match_id"] is None and note["payload"]["listing_id"] == alert.listing_id
+
+
+# --- choosing several spots from the list ------------------------------------------------------
+
+
+def test_pick_spots_from_several_regions(app, tg, db):
+    from kitefinder.sizing import spots
+
+    names = [s.name for s in spots.load_spots()[0]]
+    idx = {n: i for i, n in enumerate(names)}
+    send(app, "/setup", "80", "86", ("press", "q:intermediate"), ("press", "q:surfboard"))
+    tg.clear()
+    send(app, ("press", "q:north"), ("press", f"q:spot:{idx['Bat Galim']}"),
+         ("press", f"q:spot:{idx['Atlit']}"), ("press", f"q:spot:{idx['Atlit']}"),  # untick
+         ("press", "q:regions"), ("press", "q:center"), ("press", f"q:spot:{idx['Herzliya']}"),
+         ("press", "q:done"))  # fmt: skip
+    golden.check("setup_spot_picker", tg.transcript())
+    edits = tg.sent("editMessageText")
+    assert len(edits) == 7 and all(e["message_id"] == 7 for e in edits)  # one message, updated
+    assert tg.sent()[-1]["text"].startswith("Which season's wind")  # a new question after Done
+    assert app.setup.state()["draft"]["spots"] == ["Bat Galim", "Herzliya"]
+
+
+def test_all_of_a_region_and_typed_spots_add_to_the_ticked_ones(app, tg):
+    send(app, "/setup", "80", "86", ("press", "q:intermediate"), ("press", "q:surfboard"),
+         ("press", "q:all:eilat"), "Bat Galim and Herzliya")  # fmt: skip
+    assert app.setup.state()["draft"]["spots"] == ["Eilat North Beach", "Bat Galim", "Herzliya"]
+
+
+def test_done_with_nothing_picked_and_a_typo_keep_the_ticks(app, tg):
+    send(
+        app,
+        "/setup",
+        "80",
+        "86",
+        ("press", "q:intermediate"),
+        ("press", "q:foil"),
+        ("press", "q:done"),
+    )
+    assert tg.sent()[-1]["text"].startswith("⚠ pick at least one spot — or type them")
+    send(app, ("press", "q:all:kinneret"), "bat galm")
+    assert "did you mean Bat Galim?" in tg.sent()[-1]["text"]
+    from kitefinder.sizing import spots
+
+    kinneret = [s.name for s in spots.load_spots()[0] if s.region == "kinneret"]
+    assert kinneret and app.setup.state()["draft"]["picked"] == kinneret  # typo kept the ticks
+    send(app, ("press", "q:done"))
+    assert app.setup.state()["step"] == "season"
+
+
+def test_an_old_spot_list_that_cannot_be_edited_is_sent_again(db):
+    tg = FakeTelegram(fail_methods={"editMessageText"})
+    app = BotApp(db, tg.api(), owner_chat=str(OWNER))
+    send(
+        app,
+        "/setup",
+        "80",
+        "86",
+        ("press", "q:intermediate"),
+        ("press", "q:foil"),
+        ("press", "q:north"),
+    )
+    assert tg.sent()[-1]["text"].startswith("North (צפון) — tap the spots you ride")

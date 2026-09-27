@@ -113,6 +113,17 @@ class TelegramAPI:
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         self.call("answerCallbackQuery", callback_query_id=callback_id, text=text or None)
 
+    def edit_message(
+        self, chat_id, message_id: int, text: str, buttons: list[list[dict]] | None = None
+    ) -> None:
+        self.call(
+            "editMessageText",
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text[:4096],
+            reply_markup={"inline_keyboard": buttons or []},
+        )
+
     def edit_buttons(self, chat_id, message_id: int, buttons: list[list[dict]] | None) -> None:
         self.call(
             "editMessageReplyMarkup",

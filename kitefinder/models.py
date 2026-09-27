@@ -8,6 +8,8 @@ from typing import Any
 EQUIPMENT_TYPES = ("kite", "bar", "board", "harness", "foil", "wetsuit", "other")
 SKILL_LEVELS = ("beginner", "intermediate", "advanced")
 STYLES = ("twintip", "surfboard", "foil")
+# optional twin tip riding focus: which kite models suit you best ("" = any twin tip riding)
+DISCIPLINES = ("freeride", "bigair", "freestyle")
 # Boards and foils come in kinds that need different sizing (and units).
 SUBTYPES = {
     "board": ("twintip", "surfboard", "foilboard"),
@@ -48,6 +50,7 @@ class Profile:
     wind_source: str = "manual"  # "areas" when the wind range was derived from spots
     season: str = "all"
     min_year: int | None = None  # skip listings older than this (unknown years are kept)
+    discipline: str = ""  # twin tip focus: freeride / bigair / freestyle ("" = any)
 
     def validate(self) -> Profile:
         _require(30 <= self.weight_kg <= 150, "weight must be between 30 and 150 kg")
@@ -57,6 +60,14 @@ class Profile:
         _require(self.wind_min_kn < self.wind_max_kn, "minimum wind must be below maximum wind")
         _require(self.skill in SKILL_LEVELS, f"skill must be one of {', '.join(SKILL_LEVELS)}")
         _require(self.style in STYLES, f"style must be one of {', '.join(STYLES)}")
+        _require(
+            self.discipline in ("", *DISCIPLINES),
+            f"riding focus must be one of {', '.join(DISCIPLINES)} (or empty)",
+        )
+        _require(
+            not self.discipline or self.style == "twintip",
+            "a riding focus (freeride / big air / freestyle) is for twin tip riders",
+        )
         _require(
             self.condition_pref in CONDITION_PREFS,
             f"condition must be one of {', '.join(CONDITION_PREFS)}",

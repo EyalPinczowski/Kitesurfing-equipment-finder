@@ -122,7 +122,19 @@ def state(db: Database) -> dict:
         "listings": cards[:30],
         "watches": queries,
         "pending_alerts": len(db.pending_matches(items, queries)),
+        "spot_catalog": spot_catalog(),
     }
+
+
+def spot_catalog() -> list[dict]:
+    """Every known spot, by region — the Mini App's tick-box list."""
+    from ..sizing import spots
+
+    all_spots, _ = spots.load_spots()
+    return [
+        {"region": key, "label": label, "spots": [s.name for s in all_spots if s.region == key]}
+        for key, label in spots.REGION_LABELS.items()
+    ]
 
 
 PROFILE_ARGS = {
@@ -133,6 +145,7 @@ PROFILE_ARGS = {
     "season": "--season",
     "skill": "--skill",
     "style": "--style",
+    "discipline": "--focus",
     "budget_ils": "--budget",
     "condition_pref": "--condition",
     "min_year": "--min-year",

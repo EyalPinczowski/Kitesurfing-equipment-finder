@@ -170,7 +170,8 @@ def test_set_explanation_full_text():
         "Option: minimum — fewest kites.\n"
         "Kite quiver: 12 m² (12.5–19 kn) [owned], 8 m² (18.5–28.5 kn).\n"
         "Your 12 m² kite is slightly underpowered between 12 and 12.5 kn.\n"
-        "Using your North Orbit 12 m² kite for 12.5–19 kn."
+        "Using your North Orbit 12 m² kite for 12.5–19 kn.\n"
+        "Kite models made for twin tip riding: Duotone Evo, North Orbit, Cabrinha Switchblade, Core XR, F-One Bandit, Ozone Enduro (and similar)."
     )
 
 

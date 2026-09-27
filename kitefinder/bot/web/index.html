@@ -44,10 +44,17 @@
     <form id="profile-form">
       <label>Weight (kg) <input name="weight_kg" type="number" min="30" max="150"></label>
       <label>Hip / waist (cm) <input name="waist_cm" type="number" min="50" max="150"></label>
-      <label>Areas <input name="areas" placeholder="בת גלים, Sdot Yam — or north"></label>
+      <fieldset id="spot-list" class="spots"><legend>Where you ride — tick as many spots as you like</legend></fieldset>
+      <label>More spots (type, several at once) <input name="areas" placeholder="בת גלים, Sdot Yam — or north"></label>
       <label>or wind range (kn) <input name="wind" placeholder="12-25"></label>
       <label>Season
         <select name="season"><option value="">—</option><option>all</option><option>summer</option><option>winter</option></select>
+      </label>
+      <label>Style
+        <select name="style"><option value="">—</option><option value="twintip">twin tip</option><option value="surfboard">surfboard (wave)</option><option value="foil">foil</option></select>
+      </label>
+      <label>Twin tip riding (for the kite models)
+        <select name="discipline"><option value="">—</option><option value="freeride">freeride</option><option value="bigair">big air</option><option value="freestyle">freestyle</option><option value="any">a bit of everything</option></select>
       </label>
       <label>Budget (₪) <input name="budget_ils" type="number" min="0" step="100"></label>
       <label>New / used

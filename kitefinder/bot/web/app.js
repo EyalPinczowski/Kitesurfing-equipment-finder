@@ -45,6 +45,17 @@ function render(s) {
     `<pre class="box">${esc(r.text)}${r.id === s.active_id ? "\n\n✔ searches use this set" : ""}</pre>`).join("");
   $("#profile-text").textContent = s.profile_text || "No profile yet — fill in the form.";
   $("#owned").innerHTML = s.owned.map((o) => `<li>${esc(o)}</li>`).join("") || "<li>none</li>";
+  renderSpots(s);
+}
+
+// The spot list: one group per region, a tick box per spot (your current spots ticked).
+function renderSpots(s) {
+  const mine = new Set((s.profile && s.profile.spots) || []);
+  $("#spot-list").innerHTML = "<legend>Where you ride — tick as many spots as you like</legend>" +
+    (s.spot_catalog || []).map((r) => `<details${r.spots.some((n) => mine.has(n)) ? " open" : ""}>
+      <summary>${esc(r.label)}</summary>
+      ${r.spots.map((n) => `<label class="tick"><input type="checkbox" name="spot" value="${esc(n)}"${mine.has(n) ? " checked" : ""}> ${esc(n)}</label>`).join("")}
+    </details>`).join("");
 }
 
 async function refresh() {
@@ -81,7 +92,11 @@ document.addEventListener("click", async (ev) => {
 
 $("#profile-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const body = Object.fromEntries(new FormData(ev.target).entries());
+  const form = new FormData(ev.target);
+  const body = Object.fromEntries([...form.entries()].filter(([k]) => k !== "spot"));
+  const ticked = form.getAll("spot");
+  const typed = (body.areas || "").trim();
+  if (ticked.length || typed) body.areas = [...ticked, typed].filter(Boolean).join(", ");
   try { render((await call("/api/profile", body)).state); status("✔ Saved"); }
   catch (e) { status("⚠ " + e.message); }
 });

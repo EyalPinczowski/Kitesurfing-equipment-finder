@@ -43,6 +43,11 @@ class FakeTelegram:
                 out.append("<photo>")
             elif method == "sendMediaGroup":
                 out.append(f"<album: {len(body['media'])} photos>")
+            elif method == "editMessageText":
+                out.append("<message edited to:>")
+                out.append(body["text"])
+                for row in body["reply_markup"]["inline_keyboard"]:
+                    out.append("  [" + "] [".join(b["text"] for b in row) + "]")
             elif method == "editMessageReplyMarkup":
                 rows = body["reply_markup"]["inline_keyboard"]
                 out.append("<buttons now: " + " | ".join(b["text"] for r in rows for b in r) + ">")

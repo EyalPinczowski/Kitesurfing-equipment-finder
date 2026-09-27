@@ -295,3 +295,28 @@ def test_a_silent_cloudflared_times_out():
     with pytest.raises(RuntimeError, match="did not report"):
         tunnel.start_tunnel(1, timeout=0.2, popen=lambda argv, **kw: Proc())
     assert time.monotonic() - start < 2 and Proc.terminated
+
+
+def test_spot_list_and_riding_fields(server):
+    base, path = server
+    state = json.loads(call(base, "/api/state")[2])
+    catalog = {r["region"]: r["spots"] for r in state["spot_catalog"]}
+    assert set(catalog) == {"north", "center", "south", "eilat", "kinneret"}
+    assert "Bat Galim" in catalog["north"] and "Herzliya" in catalog["center"]
+    # what the page sends: ticked spots from several regions plus typed ones, one line
+    body = {"areas": "Bat Galim, Herzliya, אילת", "style": "twintip", "discipline": "bigair"}
+    status, _, out = call(base, "/api/profile", body)
+    profile = json.loads(out)["state"]["profile"]
+    assert status == 200
+    assert profile["spots"] == ["Bat Galim", "Herzliya", "Eilat North Beach"]
+    assert (profile["style"], profile["discipline"]) == ("twintip", "bigair")
+    status, _, out = call(base, "/api/profile", {"style": "foil", "discipline": "bigair"})
+    assert status == 400 and "twin tip riders" in json.loads(out)["error"]
+
+
+def test_page_has_the_spot_list_and_riding_fields(server):
+    base, _ = server
+    html = call(base, "/", auth=False)[2].decode()
+    js = call(base, "/app.js", auth=False)[2].decode()
+    assert 'id="spot-list"' in html and 'name="discipline"' in html and 'name="style"' in html
+    assert "renderSpots" in js and 'getAll("spot")' in js

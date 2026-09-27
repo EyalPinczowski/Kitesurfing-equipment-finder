@@ -345,8 +345,11 @@ def match(
     listings = db.candidate_listings()
     pref = profile.condition_pref if profile else "both"
     min_year = profile.min_year if profile else None
+    # your riding now (the set's snapshot may be older): picks the kite models that suit you
+    style = profile.style if profile else None
+    focus = profile.discipline if profile else ""
     scored = (
-        match_recommendation(rec, listings, _conditions(db, listings), pref, min_year)
+        match_recommendation(rec, listings, _conditions(db, listings), pref, min_year, style, focus)
         if rec
         else []
     )
@@ -354,7 +357,9 @@ def match(
     if fetchers is not None and scored:
         assessed = assess_candidates(db, client, fetchers, [s.listing.id for s in scored])
         if assessed:  # rescore with the new condition scores
-            scored = match_recommendation(rec, listings, _conditions(db, listings), pref, min_year)
+            scored = match_recommendation(
+                rec, listings, _conditions(db, listings), pref, min_year, style, focus
+            )
     new = 0
     matched: set[int] = set()
     keep: set[tuple] = set()
@@ -364,7 +369,7 @@ def match(
         matched.add(s.listing.id)
         keep.add((s.listing.id, s.item.id or 0, ""))
     for q in db.watches():
-        for s in search(q, listings, _conditions(db, listings), pref, min_year):
+        for s in search(q, listings, _conditions(db, listings), pref, min_year, style, focus):
             _, created = db.upsert_match(s.listing.id, None, q, s.score, s.why)
             new += created
             matched.add(s.listing.id)

@@ -94,8 +94,33 @@ def _index() -> tuple[dict[str, list[Spot]], list[Spot]]:
 
 
 def split_areas(text: str) -> list[str]:
-    """'Bat Galim, Sdot Yam; אילת' -> ['Bat Galim', 'Sdot Yam', 'אילת']."""
-    return [p.strip() for p in re.split(r"[,;\n]+", text) if p.strip()]
+    """Several spots in one line: 'Bat Galim, Sdot Yam; אילת', 'Bat Galim and Herzliya',
+    'בת גלים ושדות ים' → one name each. Commas, semicolons, new lines, '&', '+' and the word
+    'and' separate names; a Hebrew 'ו' ("and") in front of a known spot does too."""
+    parts = re.split(r"[,;\n&+]+|\s+and\s+", text, flags=re.IGNORECASE)
+    out = []
+    for part in (p.strip() for p in parts):
+        if part:
+            out.extend(_split_hebrew_and(part))
+    return out
+
+
+def _split_hebrew_and(part: str) -> list[str]:
+    """'בת גלים ושדות ים' → ['בת גלים', 'שדות ים'] — only where both halves are known names,
+    so a name that itself contains 'ו' is never cut."""
+    index, _ = _index()
+    if normalize_name(part) in index:
+        return [part]
+    words = part.split()
+    for i in range(1, len(words)):
+        if words[i].startswith("ו") and len(words[i]) > 1:
+            left = " ".join(words[:i])
+            right = " ".join([words[i][1:], *words[i + 1 :]])
+            if normalize_name(left) in index:
+                rest = _split_hebrew_and(right)
+                if all(normalize_name(r) in index for r in rest):
+                    return [left, *rest]
+    return [part]
 
 
 def resolve_areas(names: list[str], season: str = "all") -> AreaWind:

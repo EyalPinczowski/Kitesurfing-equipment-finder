@@ -227,6 +227,7 @@ def recommend_set(
                 f"Using {_owned_name(slot.owned)}{slot.size:g} m² kite for "
                 f"{slot.wind_min_kn:g}–{slot.wind_max_kn:g} kn."
             )
+    notes.extend(_model_notes(profile, owned, bool(plan.new_kites)))
 
     items.extend(_board_items(profile, owned, notes))
 
@@ -311,6 +312,25 @@ def _foil_items(owned: list[OwnedItem], weight: float, skill: str) -> list[RecIt
             unit="cm²",
         )
     ]
+
+
+def _model_notes(profile: Profile, owned: list[OwnedItem], buying_kites: bool) -> list[str]:
+    """Which kite models suit your riding, and a warning for an owned kite that doesn't."""
+    from .. import kite_models
+
+    style, focus = profile.style, profile.discipline
+    notes = []
+    for item in owned:
+        model = kite_models.lookup(item.brand, item.model) if item.type == "kite" else None
+        if model is not None and kite_models.suits(model, style, focus) == "no":
+            notes.append(f"Your {kite_models.style_note(model, style, focus)[2:]}.")
+    if buying_kites:
+        riding = kite_models.STYLE_LABELS[style]
+        if focus:
+            riding += f", {kite_models.USE_LABELS[focus]}"
+        names = kite_models.models_for(style, focus)
+        notes.append(f"Kite models made for {riding} riding: {', '.join(names)} (and similar).")
+    return notes
 
 
 def explain(rec: Recommendation, plan: QuiverPlan, notes: list[str]) -> str:

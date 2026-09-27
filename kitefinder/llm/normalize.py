@@ -262,6 +262,70 @@ NEW_WORDS = ("חדש באריזה", "חדש לגמרי", "brand new", "bnib", "n
 USED_WORDS = ("משומש", "יד שנייה", "יד 2", "used", "כמו חדש", "like new", "שימוש קל")
 
 
+# --- "for sale" or "looking to buy"? ----------------------------------------------------------
+# Posts asking to buy must never become listings. Plain word lists aren't enough in Hebrew:
+# "מישהו מוכר טרפז?" (does anyone sell…?) contains "מוכר" (sells) but is a buyer asking, while
+# "מחפש קונה" (looking for a buyer) and "לקונה רציני" (to a serious buyer) are sellers.
+
+_HE = "א-ת"
+_W = rf"(?<![{_HE}\w])"  # start of a word
+_E = rf"(?![{_HE}\w])"  # end of a word
+SELLER_SEEKS_BUYER = re.compile(
+    rf"מחפש(?:ת|ים|ות)?\s+(?:ל)?קונ(?:ה|ים|ת){_E}|{_W}(?:ל|ה)קונ(?:ה|ים){_E}"
+    rf"|קונה\s+רציני|looking\s+for\s+(?:a\s+)?buyers?|serious\s+buyers?",
+    re.IGNORECASE,
+)
+WANTED_PATTERNS = re.compile(
+    "|".join(
+        [
+            rf"{_W}[וה]?מחפש(?:ת|ים|ות)?{_E}",
+            rf"{_W}(?:מי|מישהו|מישהי|יש\s+מי|יש\s+מישהו)\s+(?:ש)?(?:מוכר|מוכרת|שמוכר|מחזיק)",
+            rf"{_W}(?:יש\s+למישהו|למישהו\s+יש|למישהי\s+יש)",
+            rf"{_W}(?:מעוניין|מעוניינת|רוצה|אשמח|מבקש|מבקשת)\s+(?:ל)?(?:קנות|לקנות|לרכוש|רכוש){_E}",
+            rf"{_W}[ו]?קונ(?:ה|ים){_E}",
+            rf"{_W}(?:דרוש|דרושה|דרושים){_E}",
+            r"\blooking\s+for\b",
+            r"\bwtb\b",
+            r"\bwant(?:ed)?\s+to\s+buy\b",
+            r"\bwanted\b",
+            r"\biso\b",
+            r"\bin\s+search\s+of\b",
+            r"\banyone\s+(?:selling|got|have|has)\b",
+            r"\bwho(?:'s|\s+is)?\s+selling\b",
+            r"\bbuying\b",
+        ]
+    ),
+    re.IGNORECASE,
+)
+OFFER_PATTERNS = re.compile(
+    rf"{_W}[וה]?(?:מוכר|מוכרת|מוכרים|למכירה|נמכר|מכירה){_E}|for\s+sale|\bselling\b|\bsold\b",
+    re.IGNORECASE,
+)
+_ASKING_WHO_SELLS = re.compile(
+    r"(?:מי|מישהו|מישהי|יש\s+מי|יש\s+מישהו)\s+(?:ש)?(?:מוכר|מוכרת|שמוכר)"
+    r"|\banyone\s+selling\b|\bwho(?:'s|\s+is)?\s+selling\b",
+    re.IGNORECASE,
+)
+
+
+def sale_intent(text: str) -> str:
+    """'wanted' (asking to buy), 'mixed' (selling something and asking for something else),
+    or 'offer' (everything else — the post is read as usual)."""
+    t = SELLER_SEEKS_BUYER.sub(" ", text or "")
+    wanted = bool(WANTED_PATTERNS.search(t))
+    offer = bool(OFFER_PATTERNS.search(_ASKING_WHO_SELLS.sub(" ", t)))
+    if wanted and offer:
+        return "mixed"
+    return "wanted" if wanted else "offer"
+
+
+def without_wanted_parts(text: str) -> str:
+    """A mixed post without its 'looking for…' sentences, so only what's offered is read."""
+    parts = re.split(r"(?<=[.!?\n])|(?=\n)", text or "")
+    kept = [p for p in parts if not WANTED_PATTERNS.search(SELLER_SEEKS_BUYER.sub(" ", p))]
+    return "".join(kept)
+
+
 def has_any(text: str, words) -> bool:
     t = (text or "").lower()
     return any(w in t for w in words)

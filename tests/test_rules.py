@@ -24,7 +24,8 @@ def test_rules_on_tuning_corpus(post):
 
 def test_rules_on_held_out_posts():
     """Never tuned on: an honest accuracy estimate for new posts. Measured at build time:
-    17/20 posts fully right, sale/not-sale 18/20, prices 20/20, types 21/23."""
+    18/20 posts fully right, sale/not-sale 19/20, prices 20/20, types 21/23 (was 17/20 before
+    the "looking to buy" phrase rules)."""
     ok, total, perfect = Counter(), Counter(), 0
     for post in HOLDOUT:
         checks = score(post, extract_post(post["text"], None))

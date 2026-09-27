@@ -29,3 +29,8 @@ input, select { font: inherit; padding: 8px; border-radius: 8px; border: 1px sol
 .photos img { height: 110px; border-radius: 10px; object-fit: cover; }
 .actions { display: flex; gap: 6px; margin-top: 8px; }
 .status { color: var(--hint); min-height: 1.2em; margin: 0; }
+.spots { border: 0; padding: 0; margin: 6px 0; }
+.spots legend { color: var(--hint); font-size: 13px; }
+.spots details { background: var(--card); border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
+.spots summary { cursor: pointer; }
+label.tick { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 15px; }

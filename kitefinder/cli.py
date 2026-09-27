@@ -9,9 +9,11 @@ from collections.abc import Sequence
 from . import assemble, pricing
 from .config import load_settings
 from .db import Database
+from .kite_models import USE_LABELS
 from .llm.gemini import LLMError
 from .models import (
     CONDITION_PREFS,
+    DISCIPLINES,
     EQUIPMENT_TYPES,
     QUIVER_VARIANTS,
     SEASONS,
@@ -64,7 +66,7 @@ def format_profile(p: Profile) -> str:
         f"Hip/waist: {p.waist_cm:g} cm",
         f"Wind range: {p.wind_min_kn:g}–{p.wind_max_kn:g} kn{_wind_origin(p)}",
         f"Skill: {p.skill}",
-        f"Style: {p.style}",
+        f"Style: {p.style}" + (f" ({USE_LABELS[p.discipline]})" if p.discipline else ""),
         f"Spots: {', '.join(p.spots) if p.spots else '—'}",
         f"Gusty spots: {'yes' if p.gusty else 'no'}",
         f"Budget: {f'₪{p.budget_ils:,}' if p.budget_ils is not None else '—'}",
@@ -168,6 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ps.add_argument("--skill", choices=SKILL_LEVELS)
     ps.add_argument("--style", choices=STYLES)
+    ps.add_argument(
+        "--focus",
+        choices=(*DISCIPLINES, "any"),
+        help="twin tip riding focus, for the kite models suggested (default: any)",
+    )
     ps.add_argument("--budget", type=int, help="₪")
     ps.add_argument(
         "--min-year", type=int, help="skip gear older than this year (0 = no limit), e.g. 2019"
@@ -400,6 +407,14 @@ def _profile_set(db: Database, a: argparse.Namespace) -> str:
             setattr(existing, attr, val)
     if a.min_year is not None:
         existing.min_year = a.min_year or None
+    if a.focus is not None:
+        existing.discipline = "" if a.focus == "any" else a.focus
+    if existing.style != "twintip" and existing.discipline:
+        existing.discipline = ""  # the focus is a twin tip choice
+        if a.focus not in (None, "any"):
+            raise ValidationError(
+                "a riding focus (freeride / big air / freestyle) is for twin tip riders"
+            )
     db.save_profile(existing)
     return "\n".join(["Profile saved.", format_profile(existing), *notes])
 
@@ -741,7 +756,8 @@ def _search_cmd(db: Database, a: argparse.Namespace) -> str:
     if not listings:
         return "No listings collected yet — run: kitefinder run"
     found = matcher.search(a.query, listings, None, prof.condition_pref if prof else "both",
-                           prof.min_year if prof else None)[: a.limit]  # fmt: skip
+                           prof.min_year if prof else None, prof.style if prof else None,
+                           prof.discipline if prof else "")[: a.limit]  # fmt: skip
     if not found:
         return (
             f"Nothing matches '{a.query}' yet. "

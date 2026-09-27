@@ -1,0 +1,76 @@
+# What each kite model is made for, so recommendations and matches respect your riding style.
+#   uses: freeride · bigair · freestyle (twin tip riding) · wave (surfboard) · foil
+#   An all-round model lists several. Model names are matched ignoring case and suffixes
+#   such as SLS, D/LAB, Concept Blue, the year or "V2".
+#
+# verified: false — from general knowledge of each brand's line-up, not checked against the
+# brands' pages (the build environment has no web access). The live suite will compare them.
+verified: false
+sources: []
+
+models:
+  Duotone:
+    Evo: [freeride, wave, foil]
+    Rebel: [freeride, bigair]
+    Neo: [wave]
+    Dice: [freestyle, freeride]
+    Vegas: [freestyle]
+    Juice: [freeride]
+    Mono: [freeride, foil]
+    Unit: [foil, freeride, wave]
+    Float: [foil]
+  North:
+    Orbit: [bigair, freeride]
+    Reach: [freeride, freestyle, foil]
+    Carve: [wave, foil]
+    Pulse: [freestyle]
+    Code Zero: [bigair, freeride]
+  Cabrinha:
+    Switchblade: [freeride, bigair]
+    Moto: [freeride, wave, foil]
+    Moto X: [freeride, bigair, foil]
+    Drifter: [wave]
+    FX: [freestyle, freeride]
+    Contra: [freeride, foil]
+    Nomad: [freeride]
+  Core:
+    XR: [freeride, bigair]
+    Nexus: [freeride, wave, freestyle]
+    Section: [wave]
+    GTS: [freestyle, bigair]
+    Impact: [freestyle]
+    XLite: [freeride, foil]
+  F-One:
+    Bandit: [freeride, wave, freestyle]
+    Breeze: [foil]
+    Trigger: [freestyle]
+  Ozone:
+    Enduro: [freeride]
+    Edge: [bigair]
+    Reo: [wave]
+    Catalyst: [freeride]
+    Alpha: [foil]
+    Zephyr: [freeride, foil]
+  Naish:
+    Pivot: [freeride, wave, freestyle]
+    Triad: [freeride, bigair]
+    Boxer: [freestyle]
+    Torch: [freestyle]
+  Slingshot:
+    Rally: [freeride]
+    RPM: [freestyle]
+    UFO: [foil]
+    Ghost: [foil]
+  Eleveight:
+    RS: [freeride, wave]
+    FS: [freestyle]
+    WS: [wave]
+    XS: [bigair]
+    OS: [foil, freeride]
+  Airush:
+    Lithium: [freeride]
+    One: [freeride, wave, freestyle]
+    Wave: [wave]
+    Session: [freestyle]
+    Ultra: [foil]
+    Union: [bigair, freeride]

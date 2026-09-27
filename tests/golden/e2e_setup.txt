@@ -8,7 +8,11 @@ Your level?
 What do you ride?
   [Twin tip] [Surfboard] [Foil]
 ---
-Where do you ride? Tap a region, type spots (e.g. בת גלים, Sdot Yam) — or type a wind range in knots like 12-25.
+What kind of twin tip riding? (so I suggest the right kite models)
+  [Freeride] [Big air]
+  [Freestyle] [A bit of everything]
+---
+Where do you ride? Tap a region and pick your spots from its list (as many as you like, from several regions). Or type them — several at once: בת גלים, Sdot Yam — or type a wind range in knots like 12-25.
   [North] [Center] [South]
   [Eilat] [Kinneret]
 ---
@@ -37,7 +41,7 @@ Weight: 80 kg
 Hip/waist: 86 cm
 Wind range: 12–25 kn
 Skill: intermediate
-Style: twintip
+Style: twintip (freeride)
 Spots: —
 Gusty spots: no
 Budget: —
@@ -55,6 +59,7 @@ Recommendation #1 (set, minimum)
 Set for 80 kg, 12–25 kn, twintip, intermediate.
 Option: minimum — fewest kites.
 Kite quiver: 13 m² (11.5–17.5 kn), 9 m² (16.5–25.5 kn).
+Kite models made for twin tip, freeride riding: Duotone Evo, North Reach, Cabrinha Switchblade, Core XR, F-One Bandit, Ozone Enduro (and similar).
 To look for:
 • kite 13m² (12–14m²) — covers 11.5–17.5 kn · ~₪3,300
 • kite 9m² (8–10m²) — covers 16.5–25.5 kn · ~₪2,800
@@ -67,6 +72,7 @@ Recommendation #2 (set, comfortable)
 Set for 80 kg, 12–25 kn, twintip, intermediate.
 Option: comfortable — more overlap between kites.
 Kite quiver (sweet spots): 13 m² (12–16 kn), 10 m² (16–21 kn), 8 m² (20–26.5 kn).
+Kite models made for twin tip, freeride riding: Duotone Evo, North Reach, Cabrinha Switchblade, Core XR, F-One Bandit, Ozone Enduro (and similar).
 To look for:
 • kite 13m² (12–14m²) — sweet spot 12–16 kn · ~₪3,300
 • kite 10m² (9–11m²) — sweet spot 16–21 kn · ~₪2,900
@@ -82,6 +88,7 @@ Option: one kite — simplest and cheapest.
 Kite quiver: 12 m² (12.5–19 kn).
 One kite: underpowered below 12.5 kn.
 One kite: overpowered above 19 kn.
+Kite models made for twin tip, freeride riding: Duotone Evo, North Reach, Cabrinha Switchblade, Core XR, F-One Bandit, Ozone Enduro (and similar).
 To look for:
 • kite 12m² (11–13m²) — covers 12.5–19 kn · ~₪3,200
 • board twintip 140 cm (138–141 cm) — twin tip for 80 kg · ~₪1,400

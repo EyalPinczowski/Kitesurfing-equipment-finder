@@ -14,7 +14,7 @@ from ..assemble import normalize_brand
 from ..cli import parse_wind_range
 from ..db import Database
 from ..llm import normalize as nz
-from ..models import OwnedItem, Profile, ValidationError
+from ..models import DISCIPLINES, OwnedItem, Profile, ValidationError
 from ..sizing import spots
 from .telegram import button
 
@@ -25,6 +25,7 @@ STATE_KEY = "setup_state"
 class Reply:
     text: str
     buttons: list[list[dict]] = field(default_factory=list)
+    edit: bool = False  # replace the message whose button was pressed (the spot list)
 
 
 def _choices(*pairs: tuple[str, str]) -> list[list[dict]]:
@@ -46,13 +47,18 @@ PROMPTS = {
         "What do you ride?",
         _choices(("Twin tip", "twintip"), ("Surfboard", "surfboard"), ("Foil", "foil")),
     ),
-    "areas": (
-        "Where do you ride? Tap a region, type spots (e.g. בת גלים, Sdot Yam) — "
-        "or type a wind range in knots like 12-25.",
+    "focus": (
+        "What kind of twin tip riding? (so I suggest the right kite models)",
         [
-            [button("North", "q:north"), button("Center", "q:center"), button("South", "q:south")],
-            [button("Eilat", "q:eilat"), button("Kinneret", "q:kinneret")],
+            [button("Freeride", "q:freeride"), button("Big air", "q:bigair")],
+            [button("Freestyle", "q:freestyle"), button("A bit of everything", "q:any")],
         ],
+    ),
+    "areas": (
+        "Where do you ride? Tap a region and pick your spots from its list (as many as you "
+        "like, from several regions). Or type them — several at once: בת גלים, Sdot Yam — "
+        "or type a wind range in knots like 12-25.",
+        [],  # the region buttons: see _regions()
     ),
     "season": (
         "Which season's wind should I plan for?",
@@ -92,6 +98,7 @@ ORDER = [
     "waist",
     "skill",
     "style",
+    "focus",
     "areas",
     "season",
     "gear",
@@ -101,6 +108,10 @@ ORDER = [
     "travel",
     "sites",
 ]
+
+
+def _picked_line(picked: list[str]) -> str:
+    return f"\nPicked: {', '.join(picked)}" if picked else ""
 
 
 def _number(text: str, lo: float, hi: float, what: str) -> float:
@@ -122,6 +133,36 @@ def _typed_choice(step: str, text: str) -> str:
             if text.casefold() in (label, label.replace(" ", "")):
                 return b["callback_data"].removeprefix("q:")
     return text
+
+
+REGION_BUTTONS = (("North", "north"), ("Center", "center"), ("South", "south"),
+                  ("Eilat", "eilat"), ("Kinneret", "kinneret"))  # fmt: skip
+
+
+def _done_row(picked: list[str]) -> list[dict]:
+    return [button(f"✅ Done — {len(picked)} spot{'s' if len(picked) != 1 else ''}", "q:done")]
+
+
+def _regions(picked: list[str]) -> list[list[dict]]:
+    """The region buttons (each opens its spot list), and Done once something is picked."""
+    rows = [
+        [button(label, f"q:{key}") for label, key in REGION_BUTTONS[:3]],
+        [button(label, f"q:{key}") for label, key in REGION_BUTTONS[3:]],
+    ]
+    if picked:
+        rows.append(_done_row(picked))
+    return rows
+
+
+def _spot_rows(region: str, picked: list[str]) -> list[list[dict]]:
+    all_spots, _ = spots.load_spots()
+    members = [(i, s) for i, s in enumerate(all_spots) if s.region == region]
+    cells = [button(("✓ " if s.name in picked else "") + s.name, f"q:spot:{i}") for i, s in members]
+    rows = [cells[i : i + 2] for i in range(0, len(cells), 2)]
+    rows.append([button("All of them", f"q:all:{region}"), button("⬅ Other regions", "q:regions")])
+    if picked:
+        rows.append(_done_row(picked))
+    return rows
 
 
 class Questionnaire:
@@ -153,28 +194,74 @@ class Questionnaire:
         self._save({"step": "weight", "draft": {}, "gear": [], "item": {}})
         return self._ask("weight")
 
-    def _ask(self, step: str, note: str = "") -> Reply:
+    def _ask(self, step: str, note: str = "", state: dict | None = None) -> Reply:
         text, buttons = PROMPTS[step]
+        if step == "areas":
+            buttons = _regions((state or {}).get("draft", {}).get("picked", []))
         return Reply(f"{note}\n{text}".strip(), buttons)
 
     def _next(self, state: dict, after: str) -> str:
         i = ORDER.index(after) + 1
-        step = ORDER[i]
-        if step == "season" and state["draft"].get("wind_source") == "manual":
-            step = ORDER[i + 1]  # a typed wind range needs no season
-        return step
+        while True:
+            step = ORDER[i]
+            if step == "season" and state["draft"].get("wind_source") == "manual":
+                i += 1  # a typed wind range needs no season
+            elif step == "focus" and state["draft"].get("style") != "twintip":
+                i += 1  # the riding focus is a twin tip question
+            else:
+                return step
+
+    # --- the spot list (areas step) ----------------------------------------------------------
+
+    def _spot_list(self, state: dict, value: str) -> Reply | None:
+        """Region → its spots as tick boxes; tapping a spot ticks or unticks it. The list
+        replaces the message it was tapped in. None: not a list action (typed text, Done)."""
+        regions = dict((key, label) for label, key in REGION_BUTTONS)
+        d = state["draft"]
+        picked: list[str] = d.setdefault("picked", [])
+        all_spots, _ = spots.load_spots()
+        kind, _, arg = value.partition(":")
+        if value in regions:
+            region = value
+        elif kind == "spot" and arg.isdigit() and int(arg) < len(all_spots):
+            spot = all_spots[int(arg)]
+            if spot.name in picked:
+                picked.remove(spot.name)
+            else:
+                picked.append(spot.name)
+            region = spot.region
+        elif kind == "all" and arg in regions:
+            region = arg
+            picked.extend(s.name for s in all_spots if s.region == arg and s.name not in picked)
+        elif value == "regions":
+            self._save(state)
+            return Reply(PROMPTS["areas"][0] + _picked_line(picked), _regions(picked), edit=True)
+        else:
+            return None
+        self._save(state)
+        text = f"{spots.REGION_LABELS[region]} — tap the spots you ride; tap again to remove."
+        return Reply(text + _picked_line(picked), _spot_rows(region, picked), edit=True)
 
     # --- answers --------------------------------------------------------------------------
 
-    def answer(self, text: str) -> list[Reply]:
+    def answer(self, text: str, pressed: bool = False) -> list[Reply]:
+        """`pressed`: a button tap (typed text means what it says: 'north' = every spot
+        in the north, while tapping North opens its spot list)."""
         state = self.state()
         if state is None:
             return [Reply("No setup in progress. Start with /setup")]
-        step, value = state["step"], _typed_choice(state["step"], (text or "").strip())
+        value = (text or "").strip()
+        step = state["step"]
+        if not (step == "areas" and not pressed):
+            value = _typed_choice(step, value)
+        if step == "areas" and pressed:
+            listed = self._spot_list(state, value)
+            if listed is not None:
+                return [listed]
         try:
             goto = self._apply(state, step, value)
         except ValidationError as e:
-            return [self._ask(step, f"⚠ {e}")]
+            return [self._ask(step, f"⚠ {e}", state)]
         if goto == "finish":
             return self._finish(state)
         state["step"] = goto
@@ -183,7 +270,7 @@ class Questionnaire:
         if step == "sites" and goto == "sites":
             replies.append(Reply(f"Added. {len(state['draft'].get('sites', []))} site(s) so far."))
             return replies
-        replies.append(self._ask(goto))
+        replies.append(self._ask(goto, state=state))
         return replies
 
     def _apply(self, state: dict, step: str, value: str) -> str:
@@ -201,11 +288,29 @@ class Questionnaire:
             if value not in ("twintip", "surfboard", "foil"):
                 raise ValidationError("tap one of the buttons")
             d["style"] = value
+        elif step == "focus":
+            if value not in (*DISCIPLINES, "any"):
+                raise ValidationError("tap one of the buttons")
+            d["discipline"] = "" if value == "any" else value
         elif step == "areas":
+            picked = d.pop("picked", [])
+            if value == "done":
+                if not picked:
+                    d["picked"] = picked
+                    raise ValidationError("pick at least one spot — or type them")
+                names = picked
+            else:
+                names = None
             try:
+                if names is not None:
+                    raise ValidationError("picked from the list")
                 lo, hi = parse_wind_range(value)
             except ValidationError:
-                area = spots.resolve_areas(spots.split_areas(value))
+                try:
+                    area = spots.resolve_areas(names or [*picked, *spots.split_areas(value)])
+                except ValidationError:
+                    d["picked"] = picked  # keep what was ticked when the typing has a typo
+                    raise
                 d.update(spots=area.spot_names, wind_source="areas", gusty=area.gusty)
             else:
                 if not (4 <= lo <= 50 and lo < hi <= 60):  # the profile's own limits
