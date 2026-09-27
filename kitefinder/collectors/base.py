@@ -117,6 +117,20 @@ class HttpFetcher:
             raise CollectorError(f"could not fetch {url}: {e}") from e
         return Page(resp.status_code, resp.text, resp.url)
 
+    def get_bytes(self, url: str, max_bytes: int = 8_000_000) -> bytes:
+        """A photo. Too-large or failed downloads raise CollectorError."""
+        import requests
+
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
+        except requests.RequestException as e:
+            raise CollectorError(f"could not download {url}: {e}") from e
+        if resp.status_code != 200 or len(resp.content) > max_bytes:
+            raise CollectorError(
+                f"photo not usable ({resp.status_code}, {len(resp.content)} bytes)"
+            )
+        return resp.content
+
 
 # Signs only challenge pages carry — safe to look for anywhere in the page.
 BOT_WALL_STRONG = ("px-captcha", "perimeterx", "shieldsquare", "are you a robot", "cf-chl-",

@@ -348,3 +348,61 @@ Each build step ends with a self-review and a report on what was found.
 | 1 | Save one real page per source from the phone (`kitefinder collect --save-pages`, in Step 5) and add them as test fixtures. | High | First real run |
 | 2 | Facebook group posts sorted by "new posts" instead of "recent activity", if the mobile site offers it. | Medium | After a real run |
 | 3 | Fetch full Marketplace item pages for descriptions (sizes are often only there). This costs more requests. | Medium | Later |
+
+## Step 5: pipeline, matching, search, audit ledger
+
+**What was built**
+- `pipeline.py`, one run: collect every configured source, then prefilter, extract, store listings, check photos and match.
+  - Every post ends in a terminal stage with a reason.
+  - Edited posts are re-read. Items that disappear from an edited post are retired, and they come back if it's edited again.
+  - Sold, dismissed and gone listings are settled.
+  - Facebook share links are resolved once and remembered. Missing or expired cookies are reported per source.
+  - Posts read by the rules because the quota ran out are re-read by Gemini on later runs.
+- `matcher.py`:
+  - Each fitting (listing, item) pair is scored on price against the **market median of collected listings** (the estimate table is used until there are 3 comparable listings), size fit and photo condition, with a plain-language "why".
+  - Typed searches: "kite 12m", "טרפז M", "twin tip 138", "foil 2000".
+  - Watched searches get alerts too.
+- `audit.py`, the ledger after every run:
+  - fetched = off-topic + not for sale + with gear + failed (+ backlog)
+  - every listing settled
+  - unsent matches listed
+  - per-source completeness: ✓ complete, ◐ partial by design, ⚠ may be missing posts, ✗ error
+- DB: runs, matches (with pruning of unsent stale matches), notifications, one alert per listing, watches, meta, listing images and status.
+- CLI:
+  - `run [--source] [--save-pages DIR]`, `collect`, `process [--limit]` and `report [--run]`
+  - `search '<query>'`, `watch add|list|rm`, `listings [--type]`
+  - `add-url <link>`, used by share-to-Termux
+  - `--save-pages` saves every page fetched, so the first real run on your phone gives us real test fixtures.
+- Fixed while testing: site URLs keep their trailing slash (stripping it gave a 404 on WooCommerce). Duplicates are caught with a separate key.
+
+**Tests**: 1,910 offline tests passed, 97% coverage. Family 3 over a whole run in a fake world (shop + Yad2 + Facebook group + Marketplace):
+- 18 posts: 16 with gear, 1 wanted, 1 chat, 0 unaccounted.
+- A re-run adds nothing.
+- An edited price updates the same listing, and a removed item is retired.
+- An extraction crash is recorded without stopping the run.
+- A backlog is a note, not a loss.
+- Missing cookies, a broken source and `max pages` are all flagged.
+- Matches only for the active set and watches, one per listing.
+- Exact report text, and the CLI commands end to end.
+
+**Issues found during the self-check and fixed**
+1. Sold listings stayed "new".
+2. `ASSESS_PER_RUN` was frozen when the function was defined.
+3. The trailing-slash 404.
+4. Found by the code review: "foil 2000" lost its size.
+5. Found by the code review: an early dismissal was flagged forever.
+6. Found by the code review: quota-fallback posts stayed rules-only for good.
+7. Found by the code review: old seed markers were ignored.
+8. Found by the code review: stale matches could be alerted.
+9. Found by the code review: matching was O(items × listings²).
+10. Found by the code review: `add-url` didn't re-read known posts.
+11. Found by the code review: `add-url` hid block reasons.
+12. Found by the code review: a `collect` crash left the run unfinished.
+13. Found by the code review: `--limit 0` printed everything.
+
+**Suggested improvements**
+| # | Suggestion | Impact | When |
+|---|------------|--------|------|
+| 1 | Re-alert on a real price drop (e.g. 10%+) for items you favorited. | Medium | Step 6 |
+| 2 | Distance ranking from your home town, using the city names already extracted. | Medium | Later (needs a city-coordinates table) |
+| 3 | Batch several posts per Gemini call to stretch the free quota. | Medium | Later |

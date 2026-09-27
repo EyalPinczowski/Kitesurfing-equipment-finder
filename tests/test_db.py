@@ -161,7 +161,7 @@ def test_owned_invalid_rejected(db, item):
 @pytest.mark.parametrize(
     "raw, expected",
     [
-        ("https://Shop.co.il/kites/", "https://shop.co.il/kites"),
+        ("https://Shop.co.il/kites/", "https://shop.co.il/kites/"),  # path kept as given
         ("shop.co.il/kites", "https://shop.co.il/kites"),
         ("http://shop.co.il/used?page=1#top", "http://shop.co.il/used?page=1"),
         ("  https://shop.co.il  ", "https://shop.co.il"),
@@ -349,14 +349,14 @@ def test_seed_sites_added_once_and_removal_is_respected(db):
     seeds = ["https://kitelab.co.il", "https://www.laguna.co.il/product-category/kites/"]
     assert db.seed_sites(seeds) == [
         "https://kitelab.co.il",
-        "https://www.laguna.co.il/product-category/kites",
+        "https://www.laguna.co.il/product-category/kites/",
     ]
     assert db.seed_sites(seeds) == []
     first = db.list_sites()[0]["id"]
     db.remove_site(first)
     assert db.seed_sites(seeds) == []  # removed seed stays removed
     assert [s["url"] for s in db.list_sites()] == [
-        "https://www.laguna.co.il/product-category/kites"
+        "https://www.laguna.co.il/product-category/kites/"
     ]
 
 
@@ -664,3 +664,19 @@ def test_upgrade_to_v9_keeps_raw_posts(tmp_path, monkeypatch):
     with Database(path) as new:
         (row,) = new.raw_posts_in_stage("fetched")
         assert row["hints"] == {}
+
+
+def test_site_url_kept_exactly_but_duplicates_still_caught(db):
+    """Regression: stripping the trailing slash made a WooCommerce category page 404."""
+    from kitefinder.db import url_key
+
+    sid, created = db.add_site("https://www.laguna.co.il/product-category/kites/")
+    assert (
+        created and db.list_sites()[0]["url"] == "https://www.laguna.co.il/product-category/kites/"
+    )
+    for dup in (
+        "https://laguna.co.il/product-category/kites",
+        "http://www.LAGUNA.co.il/product-category/kites/",
+    ):
+        assert db.add_site(dup) == (sid, False)
+    assert url_key("https://yamitysb.co.il/a/%d7%a7/") == "https://yamitysb.co.il/a/%d7%a7"

@@ -211,15 +211,23 @@ def now_iso() -> str:
 
 
 def normalize_url(url: str) -> str:
-    """Lower-case scheme/host, drop fragments and trailing slashes so duplicates collapse."""
+    """Lower-case scheme/host and drop the fragment. The path is kept exactly as given
+    (some servers treat /kites/ and /kites as different pages)."""
     url = url.strip()
     if "://" not in url:
         url = "https://" + url
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.netloc or "." not in parts.netloc:
         raise ValidationError(f"not a valid web address: {url}")
-    path = parts.path.rstrip("/")
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
+
+
+def url_key(url: str) -> str:
+    """For spotting duplicates only: trailing slash ignored, http and https the same."""
+    parts = urlsplit(normalize_url(url))
+    return urlunsplit(
+        ("https", parts.netloc.removeprefix("www."), parts.path.rstrip("/"), parts.query, "")
+    )
 
 
 class Database:
@@ -323,16 +331,16 @@ class Database:
 
     def add_site(self, url: str, label: str = "") -> tuple[int, bool]:
         """Returns (site_id, created). Adding a known URL again is a no-op."""
-        norm = normalize_url(url)
+        norm, key = normalize_url(url), url_key(url)
+        for site in self.list_sites():
+            if url_key(site["url"]) == key:
+                return site["id"], False
         with self.conn:
             cur = self.conn.execute(
-                "INSERT OR IGNORE INTO sites (url, label, created_at) VALUES (?, ?, ?)",
+                "INSERT INTO sites (url, label, created_at) VALUES (?, ?, ?)",
                 (norm, label, now_iso()),
             )
-        if cur.rowcount:
-            return cur.lastrowid, True
-        row = self.conn.execute("SELECT id FROM sites WHERE url = ?", (norm,)).fetchone()
-        return row["id"], False
+        return cur.lastrowid, True
 
     def list_sites(self, enabled_only: bool = False) -> list[dict]:
         sql = "SELECT * FROM sites"
@@ -353,8 +361,12 @@ class Database:
         added = []
         for url in urls:
             norm = normalize_url(url)
-            key = f"seeded_site:{norm}"
-            if self.conn.execute("SELECT 1 FROM meta WHERE key = ?", (key,)).fetchone():
+            key = f"seeded_site:{url_key(url)}"
+            legacy = f"seeded_site:{norm.rstrip('/')}"  # marker written by earlier versions
+            known = self.conn.execute(
+                "SELECT 1 FROM meta WHERE key IN (?, ?)", (key, legacy)
+            ).fetchone()
+            if known:
                 continue
             _, created = self.add_site(norm)
             with self.conn:
@@ -575,7 +587,8 @@ class Database:
                 "location = excluded.location, description = excluded.description, "
                 "sold = excluded.sold, flags = excluded.flags, "
                 "extracted_by = excluded.extracted_by, "
-                "bundle_price_ils = excluded.bundle_price_ils",
+                "bundle_price_ils = excluded.bundle_price_ils, "
+                "status = CASE WHEN status = 'gone' THEN 'new' ELSE status END",
                 (
                     rp,
                     item_index,
@@ -602,45 +615,224 @@ class Database:
             ).fetchone()["id"]
         return listing.id
 
+    _LISTING_SELECT = (
+        "SELECT l.*, r.source, r.url, r.author FROM listings l "
+        "JOIN raw_posts r ON r.id = l.raw_post_id "
+    )
+
+    @staticmethod
+    def _listing_from_row(r) -> Listing:
+        return Listing(
+            id=r["id"],
+            type=r["type"],
+            subtype=r["subtype"],
+            size_label=r["size_label"],
+            brand=r["brand"],
+            model=r["model"],
+            size=r["size"],
+            year=r["year"],
+            price_ils=r["price_ils"],
+            is_new=None if r["is_new"] is None else bool(r["is_new"]),
+            location=r["location"],
+            description=r["description"],
+            sold=bool(r["sold"]),
+            source=r["source"],
+            url=r["url"],
+            seller=r["author"],
+            flags=json.loads(r["flags"]),
+            extracted_by=r["extracted_by"],
+            bundle_price_ils=r["bundle_price_ils"],
+        )
+
     def candidate_listings(self) -> list[Listing]:
-        """Listings that can still be bought: not sold and not dismissed by the user."""
+        """Listings that can still be bought: not sold, not gone, not dismissed by the user."""
         rows = self.conn.execute(
-            "SELECT l.*, r.source, r.url, r.author FROM listings l "
-            "JOIN raw_posts r ON r.id = l.raw_post_id "
-            "WHERE l.sold = 0 AND NOT EXISTS (SELECT 1 FROM user_marks m WHERE "
-            "m.target_kind = 'listing' AND m.target_id = l.id AND m.status = 'dismissed') "
-            "ORDER BY l.id"
+            self._LISTING_SELECT + "WHERE l.sold = 0 AND l.status != 'gone' AND NOT EXISTS "
+            "(SELECT 1 FROM user_marks m WHERE m.target_kind = 'listing' AND m.target_id = l.id "
+            "AND m.status = 'dismissed') ORDER BY l.id"
         ).fetchall()
-        return [
-            Listing(
-                id=r["id"],
-                type=r["type"],
-                subtype=r["subtype"],
-                size_label=r["size_label"],
-                brand=r["brand"],
-                model=r["model"],
-                size=r["size"],
-                year=r["year"],
-                price_ils=r["price_ils"],
-                is_new=None if r["is_new"] is None else bool(r["is_new"]),
-                location=r["location"],
-                description=r["description"],
-                sold=bool(r["sold"]),
-                source=r["source"],
-                url=r["url"],
-                seller=r["author"],
-                flags=json.loads(r["flags"]),
-                extracted_by=r["extracted_by"],
-                bundle_price_ils=r["bundle_price_ils"],
+        return [self._listing_from_row(r) for r in rows]
+
+    def get_listing(self, listing_id: int) -> Listing | None:
+        row = self.conn.execute(self._LISTING_SELECT + "WHERE l.id = ?", (listing_id,)).fetchone()
+        return self._listing_from_row(row) if row else None
+
+    def listing_status(self, listing_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT status FROM listings WHERE id = ?", (listing_id,)
+        ).fetchone()
+        return row["status"] if row else ""
+
+    def set_listing_status(self, listing_ids, status: str) -> None:
+        with self.conn:
+            self.conn.executemany(
+                "UPDATE listings SET status = ? WHERE id = ?", [(status, i) for i in listing_ids]
             )
-            for r in rows
-        ]
+
+    def retire_listings(self, raw_post_id: int, keep: int) -> int:
+        """Items a re-read post no longer has (edited post) are marked gone."""
+        with self.conn:
+            cur = self.conn.execute(
+                "UPDATE listings SET status = 'gone' WHERE raw_post_id = ? AND item_index >= ?",
+                (raw_post_id, keep),
+            )
+        return cur.rowcount
+
+    def listings_for_post(self, raw_post_id: int) -> list[int]:
+        rows = self.conn.execute(
+            "SELECT id FROM listings WHERE raw_post_id = ? ORDER BY item_index", (raw_post_id,)
+        )
+        return [r["id"] for r in rows]
+
+    # --- runs, matches, notifications -------------------------------------------------------
+
+    def start_run(self, trigger: str = "manual") -> int:
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO runs (started_at, trigger) VALUES (?, ?)", (now_iso(), trigger)
+            )
+        return cur.lastrowid
+
+    def finish_run(self, run_id: int, stats: dict, errors: list[str]) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE runs SET finished_at = ?, stats = ?, errors = ? WHERE id = ?",
+                (now_iso(), json.dumps(stats, ensure_ascii=False),
+                 json.dumps(errors, ensure_ascii=False), run_id),
+            )  # fmt: skip
+
+    def get_run(self, run_id: int | None = None) -> dict | None:
+        if run_id is None:
+            row = self.conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+        else:
+            row = self.conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        return {**dict(row), "stats": json.loads(row["stats"]), "errors": json.loads(row["errors"])}
+
+    def upsert_match(self, listing_id: int, rec_item_id: int | None, query: str, score: float,
+                     why: str) -> tuple[int, bool]:  # fmt: skip
+        """(match id, created). A listing matched again only gets its score refreshed."""
+        row = self.conn.execute(
+            "SELECT id FROM matches WHERE listing_id = ? AND COALESCE(rec_item_id, 0) = ? "
+            "AND query = ?",
+            (listing_id, rec_item_id or 0, query),
+        ).fetchone()
+        with self.conn:
+            if row:
+                self.conn.execute(
+                    "UPDATE matches SET score = ?, why = ? WHERE id = ?", (score, why, row["id"])
+                )
+                return row["id"], False
+            cur = self.conn.execute(
+                "INSERT INTO matches (listing_id, rec_item_id, query, score, why, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (listing_id, rec_item_id, query, score, why, now_iso()),
+            )
+        return cur.lastrowid, True
+
+    def pending_matches(self, rec_item_ids=None, queries=None) -> list[dict]:
+        """Matches not alerted yet, best first; dismissed / sold / gone listings excluded.
+
+        With filters, only matches for these recommendation items / watched queries (so an
+        old, replaced set doesn't trigger alerts). A listing is alerted once, not per item.
+        """
+        rows = self.conn.execute(
+            "SELECT m.* FROM matches m JOIN listings l ON l.id = m.listing_id "
+            "WHERE NOT EXISTS (SELECT 1 FROM notifications n JOIN matches m2 ON m2.id = n.match_id "
+            "WHERE m2.listing_id = m.listing_id) "
+            "AND l.sold = 0 AND l.status != 'gone' AND NOT EXISTS (SELECT 1 FROM user_marks u "
+            "WHERE u.target_kind = 'listing' AND u.target_id = l.id AND u.status = 'dismissed') "
+            "ORDER BY m.score DESC, m.id"
+        ).fetchall()
+        out, seen = [], set()
+        for r in rows:
+            if rec_item_ids is not None or queries is not None:
+                ok = (r["rec_item_id"] in (rec_item_ids or ())) or (
+                    r["query"] and r["query"] in (queries or ())
+                )
+                if not ok:
+                    continue
+            if r["listing_id"] in seen:
+                continue
+            seen.add(r["listing_id"])
+            out.append(dict(r))
+        return out
+
+    def prune_matches(self, keep: set[tuple]) -> int:
+        """Delete unsent matches not in `keep` ((listing_id, rec_item_id or 0, query) tuples):
+        they no longer fit. Matches already alerted stay as history."""
+        rows = self.conn.execute(
+            "SELECT id, listing_id, COALESCE(rec_item_id, 0) AS item, query FROM matches m "
+            "WHERE NOT EXISTS (SELECT 1 FROM notifications n WHERE n.match_id = m.id)"
+        ).fetchall()
+        stale = [r["id"] for r in rows if (r["listing_id"], r["item"], r["query"]) not in keep]
+        with self.conn:
+            self.conn.executemany("DELETE FROM matches WHERE id = ?", [(i,) for i in stale])
+        return len(stale)
+
+    # --- watched searches ("tell me about any kite 12m") -----------------------------------
+
+    def add_watch(self, query: str) -> bool:
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                (f"watch:{query}", now_iso()),
+            )
+        return cur.rowcount > 0
+
+    def remove_watch(self, query: str) -> bool:
+        with self.conn:
+            cur = self.conn.execute("DELETE FROM meta WHERE key = ?", (f"watch:{query}",))
+        return cur.rowcount > 0
+
+    def watches(self) -> list[str]:
+        rows = self.conn.execute("SELECT key FROM meta WHERE key LIKE 'watch:%' ORDER BY key")
+        return [r["key"].removeprefix("watch:") for r in rows]
+
+    def meta_get(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def meta_set(self, key: str, value: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                "value = excluded.value",
+                (key, value),
+            )
+
+    def record_notification(
+        self, match_id: int | None, payload: dict, channel: str = "telegram"
+    ) -> int:
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO notifications (match_id, channel, payload, sent_at) "
+                "VALUES (?, ?, ?, ?)",
+                (match_id, channel, json.dumps(payload, ensure_ascii=False), now_iso()),
+            )
+        return cur.lastrowid
+
+    def notifications(self, limit: int = 50) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [{**dict(r), "payload": json.loads(r["payload"])} for r in rows]
 
     def add_listing_images(self, listing_id: int, urls: list[str]) -> None:
         with self.conn:
             self.conn.executemany(
                 "INSERT INTO listing_images (listing_id, url) VALUES (?, ?)",
                 [(listing_id, u) for u in urls],
+            )
+
+    def set_listing_images(self, listing_id: int, urls: list[str]) -> None:
+        """Replace a listing's photos (a re-read post may have new ones)."""
+        with self.conn:
+            self.conn.execute("DELETE FROM listing_images WHERE listing_id = ?", (listing_id,))
+            self.conn.executemany(
+                "INSERT INTO listing_images (listing_id, url) VALUES (?, ?)",
+                [(listing_id, u) for u in dict.fromkeys(urls)],
             )
 
     def listing_images(self, listing_id: int) -> list[str]:

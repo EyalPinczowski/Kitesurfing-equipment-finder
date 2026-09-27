@@ -32,3 +32,12 @@ design choice with a reasonable alternative.
 15. **Shop items count as new unless the title says used, demo or יד שנייה.** *judgement.*
 16. **Out-of-stock shop sizes are kept and marked "sold out"**, not dropped. *judgement.* This keeps the audit exact.
 17. **Requests are polite**: a random 2–6 s pause between pages (8–20 s for Facebook, set in `sources.yaml`) and a mobile browser user agent. *judgement.*
+
+## Matching and runs (Step 5)
+
+18. **Match score = 45% price against market/typical, 30% size fit, 25% photo condition.** *judgement.* There are small deductions when the size or year isn't stated. It only orders results: every listing that fits is kept.
+19. **The "market" price is the median of at least 3 comparable collected listings** (same kind, size in range, new/used). Below 3, the estimate table is used. *judgement.*
+20. **When the Gemini quota runs out mid-run, the remaining posts are read by the offline rules straight away** (so alerts aren't delayed), then **re-read by Gemini on later runs, 30 per run.** *judgement.* The alternative is to wait for the quota and alert later.
+21. **Photo checks: at most 5 per run, and only for listings that match**, to save quota. *judgement.*
+22. **The same item posted on several sources** (e.g. Yad2 and a Facebook group) is still alerted once per source. Step 6 will collapse likely duplicates (same type, brand, size and price) into one alert that lists all sources. *judgement.*
+23. **One alert per listing**, even if it fits several items in your set. After an alert, a later price drop doesn't re-alert. *judgement.* Re-alerting on price drops is suggested for later.

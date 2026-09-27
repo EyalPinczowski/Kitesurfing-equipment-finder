@@ -89,7 +89,7 @@ def test_sites_commands(db):
     assert run(db, "sites", "list") == "No sites yet."
     assert run(db, "sites", "add", "shop.co.il/kites/") == "Added site #1"
     assert run(db, "sites", "add", "https://SHOP.co.il/kites") == "Already listed site #1"
-    assert run(db, "sites", "list") == "#1 https://shop.co.il/kites"
+    assert run(db, "sites", "list") == "#1 https://shop.co.il/kites/"
     assert run(db, "sites", "rm", "1") == "Removed site #1"
     assert run(db, "sites", "rm", "1") == "No site with id 1"
 
@@ -939,3 +939,126 @@ def test_main_reports_gemini_errors(monkeypatch, tmp_path, capsys):
     )
     assert cli.main(["llm", "models"]) == 3
     assert "Gemini error 403: API key not valid" in capsys.readouterr().err
+
+
+# --- step 5: run / collect / process / report / search / watch / listings / add-url -------------
+
+
+@pytest.fixture
+def world_cli(db, monkeypatch):
+    from world import CATEGORY, World
+
+    world = World()
+    monkeypatch.setattr(
+        "kitefinder.pipeline.Fetchers", lambda settings, overrides=None: world.fetchers()
+    )
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    run(db, "profile", "set", "--weight", "80", "--waist", "86", "--wind", "12-25")
+    run(db, "recommend", "--option", "minimum")
+    db.add_site(CATEGORY)
+    return world
+
+
+def test_run_and_report(db, world_cli):
+    out = run(db, "run")
+    assert out.splitlines()[0] == "Run #1: ✓ all accounted for"
+    assert "Posts: 18 new/changed → 16 with gear, 1 not for sale, 1 off-topic, 0 failed" in out
+    assert run(db, "report") == out
+    assert run(db, "report", "--run", "1") == out
+
+
+def test_collect_then_process(db, world_cli):
+    out = run(db, "collect")
+    assert "Posts: 18 new/changed → 0 with gear" in out and "18 posts wait for the next run" in out
+    assert run(db, "process") == "Read: extracted 16, not_listing 1, prefilter_rejected 1"
+    assert run(db, "process") == "Read: nothing waiting"
+
+
+def test_run_only_one_source_and_save_pages(db, world_cli, tmp_path):
+    out = run(db, "run", "--source", "yad2", "--save-pages", str(tmp_path / "pages"))
+    assert "yad2: קייט" in out and "shop.example" not in out and "facebook" not in out
+    saved = sorted(p.name for p in (tmp_path / "pages").iterdir())
+    assert (
+        len(saved) == 2
+        and saved[0].startswith("001_y2.example")
+        and out.endswith("Saved 2 pages to " + str(tmp_path / "pages"))
+    )
+
+
+def test_search_and_listings(db, world_cli):
+    assert run(db, "search", "kite 12m") == "No listings collected yet — run: kitefinder run"
+    run(db, "run")
+    out = run(db, "search", "kite 12m")
+    lines = out.splitlines()
+    assert lines[0].endswith("for 'kite 12m':") and all("kite" in line for line in lines[1:])
+    assert "fits your kite 11–13m²" in lines[1]
+    assert run(db, "search", "foil 2000", "--limit", "3").startswith(
+        "Nothing matches 'foil 2000' yet."
+    )
+    kites = run(db, "listings", "--type", "kite").splitlines()
+    assert kites and all(" kite " in line for line in kites)
+    assert run(db, "listings", "--type", "wetsuit") == "No listings yet."
+
+
+def test_watch_commands(db, world_cli):
+    assert run(db, "watch", "list") == "No watched searches."
+    assert run(db, "watch", "add", "harness M") == "Watching"
+    assert run(db, "watch", "add", "harness M") == "Already watching"
+    assert run(db, "watch", "list") == "harness M"
+    with pytest.raises(ValidationError, match="say what you're looking for"):
+        run(db, "watch", "add", "cheap stuff")
+    run(db, "run")
+    assert any(m["query"] == "harness M" for m in db.pending_matches(None, ["harness M"]))
+    assert run(db, "watch", "rm", "harness M") == "Stopped watching"
+    assert run(db, "watch", "rm", "harness M") == "Not watching that"
+
+
+def test_add_url_for_a_shop_page(db, world_cli):
+    from world import CATEGORY
+
+    out = run(db, "add-url", CATEGORY)
+    # page 1 only: the Orbit, the Rebel's 3 sizes and the Atmos board
+    assert out == f"Read 5 posts from {CATEGORY}: 5 with gear, 3 new matches"
+    with pytest.raises(ValidationError, match="HTTP 404"):  # the reason is shown, not hidden
+        run(db, "add-url", "https://shop.example.co.il/missing")
+
+
+def test_add_url_rereads_a_known_post(db, world_cli):
+    from world import CATEGORY
+
+    run(db, "add-url", CATEGORY)
+    (row,) = [
+        r for r in db.conn.execute("SELECT id FROM raw_posts WHERE source_id LIKE '%north-orbit%'")
+    ]
+    db.set_stage(row["id"], "not_listing", "wrong")
+    out = run(db, "add-url", CATEGORY)
+    assert out.startswith(f"Read 5 posts from {CATEGORY}: 5 with gear")
+    assert (
+        db.conn.execute("SELECT stage_status FROM raw_posts WHERE id = ?", (row["id"],)).fetchone()[
+            0
+        ]
+        == "extracted"
+    )
+
+
+def test_add_url_blocked_page_says_why(db, world_cli):
+    world_cli.texts["https://blocked.example.com/k"] = (
+        "<html><title>Just a moment...</title></html>"
+    )
+    with pytest.raises(ValidationError, match="bot protection"):
+        run(db, "add-url", "https://blocked.example.com/k")
+
+
+def test_collect_crash_still_finishes_the_run(db, world_cli, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("parser exploded")
+
+    monkeypatch.setattr("kitefinder.pipeline.collect", boom)
+    out = run(db, "collect")
+    assert "RuntimeError: parser exploded" in out
+    assert db.get_run()["finished_at"]
+
+
+def test_listings_limit_must_be_positive(db, world_cli):
+    with pytest.raises(ValidationError, match="--limit must be 1 or more"):
+        run(db, "listings", "--limit", "0")

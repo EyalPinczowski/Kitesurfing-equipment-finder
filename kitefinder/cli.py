@@ -269,6 +269,35 @@ def build_parser() -> argparse.ArgumentParser:
     llm.add_parser("status", help="model, key and today's usage")
     llm.add_parser("models", help="models your key can use")
 
+    rn = sub.add_parser("run", help="collect, read, match: one full search run")
+    rn.add_argument("--source", choices=("sites", "yad2", "facebook"), help="only this source")
+    rn.add_argument("--save-pages", metavar="DIR", help="also save every fetched page (debugging)")
+    co = sub.add_parser("collect", help="only collect new posts (no reading or matching)")
+    co.add_argument("--source", choices=("sites", "yad2", "facebook"))
+    co.add_argument("--save-pages", metavar="DIR")
+    pr = sub.add_parser("process", help="read collected posts that are waiting")
+    pr.add_argument("--limit", type=int)
+    rp = sub.add_parser("report", help="what the last run found, and whether anything was missed")
+    rp.add_argument("--run", type=int, dest="run_id")
+    se = sub.add_parser("search", help="search collected listings, e.g. search 'kite 12m'")
+    se.add_argument("query")
+    se.add_argument("--limit", type=int, default=10)
+    wa = sub.add_parser("watch", help="get alerts for a search").add_subparsers(
+        dest="action", required=True
+    )
+    wa_add = wa.add_parser("add")
+    wa_add.add_argument("query")
+    wa_rm = wa.add_parser("rm")
+    wa_rm.add_argument("query")
+    wa.add_parser("list")
+    li = sub.add_parser("listings", help="collected listings")
+    li.add_argument("--type", choices=EQUIPMENT_TYPES)
+    li.add_argument("--limit", type=int, default=20)
+    au = sub.add_parser(
+        "add-url", help="read one post / product page by its link (share to Termux)"
+    )
+    au.add_argument("url")
+
     us = sub.add_parser("use", help="choose which saved set searches use")
     us.add_argument("id", type=int)
 
@@ -548,6 +577,20 @@ def _gemini(db: Database, required: bool = False):
     return client
 
 
+def listing_summary(listing) -> str:
+    """'kite 12m² North Orbit 2021 · ₪3,200 used · Haifa'"""
+    name = " ".join(x for x in (listing.brand, listing.model) if x)
+    kind = f"{listing.type} {listing.subtype}" if listing.subtype else listing.type
+    size = f" {fmt_size(listing.type, listing.size)}" if listing.size is not None else ""
+    if listing.size_label:
+        size = f" size {listing.size_label}"
+    year = f" {listing.year}" if listing.year else ""
+    price = ils(listing.price_ils) if listing.price_ils is not None else "no price"
+    cond = {True: " new", False: " used", None: ""}[listing.is_new]
+    where = listing.location or "location unknown"
+    return f"{kind}{size}{f' {name}' if name else ''}{year} · {price}{cond} · {where}"
+
+
 def format_extracted(result) -> str:
     method = result.method
     if result.status != "listing":
@@ -556,19 +599,7 @@ def format_extracted(result) -> str:
         f"Found {len(result.listings)} item{'s' if len(result.listings) != 1 else ''} ({method}):"
     ]
     for listing in result.listings:
-        brand = " ".join(x for x in (listing.brand, listing.model) if x)
-        kind = f"{listing.type} {listing.subtype}" if listing.subtype else listing.type
-        size = f" {fmt_size(listing.type, listing.size)}" if listing.size is not None else ""
-        if listing.size_label:
-            size = f" size {listing.size_label}"
-        year = f" {listing.year}" if listing.year else ""
-        price = ils(listing.price_ils) if listing.price_ils is not None else "no price"
-        cond = {True: " new", False: " used", None: ""}[listing.is_new]
-        sold = " · SOLD" if listing.sold else ""
-        lines.append(
-            f"• {kind}{size}{f' {brand}' if brand else ''}{year} · {price}{cond}"
-            f" · {listing.location or 'location unknown'}{sold}"
-        )
+        lines.append(f"• {listing_summary(listing)}{' · SOLD' if listing.sold else ''}")
         if listing.flags:
             lines.append(f"  notes: {', '.join(listing.flags)}")
     if result.bundle_price_ils:
@@ -631,6 +662,128 @@ def _llm_cmd(db: Database, a: argparse.Namespace) -> str:
         f"Gemini model: {client.model}\n"
         f"Calls today: {client.calls_today()} of {client.rpd} (then offline rules)\n"
         f"Pace: at most {client.rpm} calls per minute"
+    )
+
+
+def _fetchers(save_dir: str | None = None):
+    from .pipeline import Fetchers
+
+    fetchers = Fetchers(load_settings())
+    if save_dir:
+        fetchers = _SavingFetchers(fetchers, save_dir)
+    return fetchers
+
+
+class _SavingFetchers:
+    """Wraps the fetchers and writes every page to a folder (to build real test fixtures)."""
+
+    def __init__(self, inner, folder: str):
+        from pathlib import Path
+
+        self.inner, self.folder, self.count = inner, Path(folder), 0
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self.settings = inner.settings
+
+    def get(self, name):
+        fetch = self.inner.get(name)
+
+        def saving(url):
+            import re
+
+            page = fetch(url)
+            self.count += 1
+            safe = re.sub(r"[^\w.-]+", "_", url.split("://", 1)[-1])[:120]
+            (self.folder / f"{self.count:03d}_{safe}.html").write_text(page.text, encoding="utf-8")
+            return page
+
+        return saving
+
+    def photo(self, url):
+        return self.inner.photo(url)
+
+
+def _listing_brief(listing) -> str:
+    return f"#{listing.id} {listing_summary(listing)} · {listing.source}"
+
+
+def _run_cmd(db: Database, a: argparse.Namespace, collect_only: bool = False) -> str:
+    from . import audit, pipeline
+
+    fetchers = _fetchers(a.save_pages)
+    settings = fetchers.settings
+    if collect_only:
+        run_id = db.start_run("collect")
+        report = pipeline.RunReport(run_id)
+        try:
+            report.sources = pipeline.collect(db, settings, fetchers, run_id, a.source)
+        except Exception as e:  # recorded in the run, like `run` does  # noqa: BLE001
+            report.errors.append(f"{type(e).__name__}: {e}")
+        errors = report.errors + [f"{r.name}: {e}" for r in report.sources for e in r.errors]
+        db.finish_run(run_id, report.to_stats(), errors)
+    else:
+        run_id = pipeline.run(db, settings, fetchers, _gemini(db), "manual", a.source).run_id
+    out = audit.format_audit(audit.audit(db, run_id))
+    if a.save_pages:
+        out += f"\nSaved {fetchers.count} pages to {a.save_pages}"
+    return out
+
+
+def _search_cmd(db: Database, a: argparse.Namespace) -> str:
+    from . import matcher
+
+    prof = db.get_profile()
+    listings = db.candidate_listings()
+    if not listings:
+        return "No listings collected yet — run: kitefinder run"
+    found = matcher.search(a.query, listings, None, prof.condition_pref if prof else "both",
+                           prof.min_year if prof else None)[: a.limit]  # fmt: skip
+    if not found:
+        return (
+            f"Nothing matches '{a.query}' yet. "
+            f"Get alerts when it appears: kitefinder watch add '{a.query}'"
+        )
+    lines = [f"{len(found)} match{'es' if len(found) != 1 else ''} for '{a.query}':"]
+    for s in found:
+        lines.append(f"• {_listing_brief(s.listing)} — {s.why}")
+    return "\n".join(lines)
+
+
+def _add_url_cmd(db: Database, a: argparse.Namespace) -> str:
+    from .collectors import facebook as fb
+    from .collectors import web
+    from .collectors.base import CollectorError, host
+    from .pipeline import match, process
+
+    fetchers = _fetchers()
+    url = a.url.strip()
+    try:
+        if "facebook.com" in host(url):
+            fetch = fetchers.get("facebook")
+            mobile = url.replace("://www.facebook.com", "://m.facebook.com")
+            posts, _ = fb.parse_group_page(fetch(mobile).text, mobile)
+            posts = posts[:1]
+        else:
+            result = web.collect_site(url, fetchers.get("web"), max_pages=1)
+            if result.errors and not result.posts:
+                raise CollectorError(result.errors[0])
+            posts = result.posts
+    except CollectorError as e:
+        raise ValidationError(str(e)) from e
+    if not posts:
+        return f"Nothing readable at {url}"
+    run_id = db.start_run("add-url")
+    for post in posts:
+        pid, state = db.upsert_raw_post(post, run_id)
+        if state == "seen":  # you asked for it: read it again even if nothing changed
+            db.set_stage(pid, "fetched", "manual re-read")
+            with db.conn:
+                db.conn.execute("UPDATE raw_posts SET run_id = ? WHERE id = ?", (run_id, pid))
+    stages = process(db, _gemini(db))
+    new, _ = match(db)
+    db.finish_run(run_id, {"stages": dict(stages)}, [])
+    return (
+        f"Read {len(posts)} post{'s' if len(posts) != 1 else ''} from {url}: "
+        f"{stages.get('extracted', 0)} with gear, {new} new match{'es' if new != 1 else ''}"
     )
 
 
@@ -729,6 +882,37 @@ def run(argv: Sequence[str] | None = None, db: Database | None = None) -> str:
             return _recommend_sets(db, prof, a.option)
         if a.cmd == "assemble":
             return _assemble_cmd(db, a)
+        if a.cmd in ("run", "collect"):
+            return _run_cmd(db, a, collect_only=a.cmd == "collect")
+        if a.cmd == "process":
+            from .pipeline import process
+
+            stages = process(db, _gemini(db), a.limit)
+            return "Read: " + (
+                ", ".join(f"{k} {v}" for k, v in sorted(stages.items())) or "nothing waiting"
+            )
+        if a.cmd == "report":
+            from . import audit
+
+            return audit.format_audit(audit.audit(db, a.run_id))
+        if a.cmd == "search":
+            return _search_cmd(db, a)
+        if a.cmd == "watch":
+            if a.action == "list":
+                return "\n".join(db.watches()) or "No watched searches."
+            if a.action == "add":
+                from .matcher import parse_query
+
+                parse_query(a.query)  # validate before saving
+                return "Watching" if db.add_watch(a.query) else "Already watching"
+            return "Stopped watching" if db.remove_watch(a.query) else "Not watching that"
+        if a.cmd == "listings":
+            if a.limit < 1:
+                raise ValidationError("--limit must be 1 or more")
+            items = [x for x in db.candidate_listings() if not a.type or x.type == a.type]
+            return "\n".join(_listing_brief(x) for x in items[-a.limit :]) or "No listings yet."
+        if a.cmd == "add-url":
+            return _add_url_cmd(db, a)
         if a.cmd == "extract":
             return _extract_cmd(db, a)
         if a.cmd == "assess":
